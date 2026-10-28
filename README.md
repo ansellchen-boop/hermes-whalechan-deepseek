@@ -55,13 +55,26 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 - 人设认这句话：收到就调一次 `sticker`，只发一张；没收到就不发、也不调工具
 - 子代理会话不掷骰（有 `parent_session_id` 就跳过），免得子任务也去发表情包
 
-调概率：`~/.hermes/plugins/whalechan/config.json`
+调概率有两个入口。会话里直接发斜杠命令（Hermes 插件没有 web route，上游 v0.3.1 的浏览器设置页在这里换成了命令）：
+
+```
+/whalechan                 # 看当前状态
+/whalechan 80              # 概率改 80%
+/whalechan off             # 关
+/whalechan on              # 开
+/whalechan custom <文本>    # 写追加设定（≤2000 字）
+/whalechan custom          # 看写了什么
+/whalechan custom clear    # 清空
+```
+
+或者直接改 `~/.hermes/plugins/whalechan/config.json`：
 
 ```json
 {
   "enabled": true,
   "probability": 66.6,
-  "sources": []
+  "sources": [],
+  "custom": ""
 }
 ```
 
@@ -70,8 +83,18 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 | `enabled` | `false` 彻底关掉掷骰（工具还在，人设不会再主动发） |
 | `probability` | 0–100，保留一位小数；0 永不发，100 每轮都发 |
 | `sources` | 空数组 = 所有平台都掷；填了就只在这些 `platform` 上掷（如 `["telegram"]`） |
+| `custom` | 追加设定，≤2000 字；非空时每轮以「追加设定」小节注入，和掷骰提示共用同一次 `pre_llm_call` |
 
 改完配置下一轮就生效，不用重启。
+
+**两套追加设定的区别**（别写重复了）：
+
+| 位置 | 谁管 | 生效时机 | 适合 |
+| --- | --- | --- | --- |
+| `persona/user.md` | 跟着仓库走，`apply.py` 合成进 personality | 新会话 | 长期固定的称呼、口癖、规矩，跨机器同步 |
+| `config.json` 的 `custom` / `/whalechan custom` | 只在这台机器 | 下一轮 | 临时试效果，或者不想动仓库 |
+
+两边都写会叠加，`custom` 在 user message 里、位置更靠后。
 
 `sticker` 工具参数：`scene`（中文场景，如 `摸鱼 累`）、`count`（1–8）、`character`（默认 `deepseek`，`any` 全站）、
 `type`（`meme` / `illustration` / `standing` / `comic` / `setting` / `other`）、`random`、`refresh`。

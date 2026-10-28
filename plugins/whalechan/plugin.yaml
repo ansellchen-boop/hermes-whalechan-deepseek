@@ -1,6 +1,6 @@
 name: whalechan
-version: 0.2.0
-description: "鲸鱼娘（DeepSeek娘）表情包工具 + 每轮掷骰。按场景/心情从社区图库找图，返回可直接粘贴的 Markdown 图片行；发不发由宿主掷骰决定。人设走 personalities.whalechan。移植自 dsh-whalechan-herself（MIT）。"
+version: 0.3.0
+description: "鲸鱼娘（DeepSeek娘）表情包工具 + 每轮掷骰 + /whalechan 设置命令（概率/开关/追加设定）。按场景/心情从社区图库找图，返回可直接粘贴的 Markdown 图片行；发不发由宿主掷骰决定。人设走 personalities.whalechan。移植自 dsh-whalechan-herself（MIT）。"
 author: Weidows (original) / Hermes port
 kind: standalone
 provides_tools:

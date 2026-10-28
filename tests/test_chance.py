@@ -77,5 +77,30 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(chance.should_fire(config, platform=""))
 
 
+class CustomTest(unittest.TestCase):
+    def test_normalize_trims_and_caps(self):
+        self.assertEqual(chance.normalize_custom("  hi  "), "hi")
+        self.assertEqual(len(chance.normalize_custom("字" * 5000)), 2000)
+        self.assertEqual(chance.normalize_custom(None), "")
+        self.assertEqual(chance.normalize_custom("a\r\nb"), "a\nb")
+
+    def test_save_roundtrip_keeps_unknown_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            path.write_text(json.dumps({"keep": 1, "probability": 10}), encoding="utf-8")
+            config = chance.save_config({"custom": "叫我主人", "probability": 250}, path)
+            self.assertEqual(config["custom"], "叫我主人")
+            self.assertEqual(config["probability"], 100.0)
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(raw["keep"], 1)
+
+    def test_save_creates_missing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sub" / "config.json"
+            config = chance.save_config({"enabled": False}, path)
+            self.assertFalse(config["enabled"])
+            self.assertTrue(path.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

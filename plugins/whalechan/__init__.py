@@ -96,18 +96,71 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     """每一轮（turn）开头掷一次骰；命中就给这一轮塞一行提示。
 
     - 子代理会话（有 parent_session_id）不掷，免得子任务也去发表情包；
+    - 用户写的「追加设定」每轮现读，写进同一个 context，改完下一轮生效；
     - 任何异常都吞掉：掷骰失败不能把正常轮次搞挂。
     """
     try:
         if kwargs.get("parent_session_id"):
             return None
         config = chance.load_config()
+        parts: list[str] = []
+        custom = config.get("custom") or ""
+        if custom:
+            parts.append(f"{chance.CUSTOM_HEADER}\n\n{custom}")
         platform = str(kwargs.get("platform") or "")
         if chance.should_fire(config, platform=platform):
-            return {"context": chance.HIT_CONTEXT}
+            parts.append(chance.HIT_CONTEXT)
+        if parts:
+            return {"context": "\n\n".join(parts)}
     except Exception as exc:  # noqa: BLE001
         log.warning("whalechan: 掷骰失败（已忽略）: %s", exc)
     return None
+
+
+_USAGE = (
+    "用法：/whalechan 80 · /whalechan off · /whalechan on · "
+    "/whalechan custom <文本> · /whalechan custom clear"
+)
+
+
+def _cmd_whalechan(raw_args: str = "") -> str:
+    """会话内 ``/whalechan``：替代上游的设置页（Hermes 插件没有 web route）。"""
+    args = (raw_args or "").strip()
+    config = chance.load_config()
+    if not args:
+        custom = config.get("custom") or ""
+        state = "开" if config.get("enabled", True) else "关"
+        tail = f"「{custom[:24]}…」" if len(custom) > 24 else (f"「{custom}」" if custom else "空")
+        return (
+            f"表情包掷骰：{state} · 概率 {config.get('probability')}%\n"
+            f"追加设定：{len(custom)}/{chance.DEFAULT_CUSTOM_MAX} 字，{tail}\n"
+            f"{_USAGE}"
+        )
+    lowered = args.lower()
+    if lowered in {"off", "关"}:
+        config = chance.save_config({"enabled": False})
+        return "表情包掷骰：关。要开回来就 /whalechan on"
+    if lowered in {"on", "开"}:
+        config = chance.save_config({"enabled": True})
+        return f"表情包掷骰：开，概率 {config.get('probability')}%"
+    if lowered in {"custom clear", "clear"}:
+        chance.save_config({"custom": ""})
+        return "追加设定已清空，下一轮生效。"
+    if lowered == "custom":
+        custom = config.get("custom") or ""
+        return "追加设定：空。" + _USAGE if not custom else f"追加设定（{len(custom)} 字）：\n{custom}"
+    if lowered.startswith("custom"):
+        text = args[len("custom"):].strip()
+        if not text:
+            return _USAGE
+        config = chance.save_config({"custom": text})
+        return f"追加设定已写入（{len(config.get('custom') or '')} 字），下一轮生效。"
+    try:
+        value = float(args)
+    except ValueError:
+        return f"看不懂「{args}」。" + _USAGE
+    config = chance.save_config({"probability": value})
+    return f"概率改成 {config.get('probability')}%（0 等于关，100 每轮都发）"
 
 
 def register(ctx: Any) -> None:
@@ -121,3 +174,9 @@ def register(ctx: Any) -> None:
         emoji="🐳",
     )
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_command(
+        "whalechan",
+        _cmd_whalechan,
+        description="鲸鱼娘表情包设置：概率 / 开关 / 追加设定",
+        args_hint="[80|off|on|custom <文本>]",
+    )
