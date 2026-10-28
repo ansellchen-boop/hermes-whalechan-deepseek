@@ -9,22 +9,37 @@
 
 ## 装
 
+一条命令，插件自带人设（首次加载自动写进 `~/.hermes/config.yaml`）：
+
+```bash
+hermes plugins install ansellchen-boop/hermes-whalechan-deepseek/plugins/whalechan --enable
+```
+
+装完**开一个新会话**就有鲸鱼娘了——人设（personality）是会话启动时读的。
+`hermes plugins update whalechan` 之后同理。
+
+想从源码装、或者要强制同步人设：
+
 ```bash
 git clone https://github.com/ansellchen-boop/hermes-whalechan-deepseek.git ~/hermes-whalechan
 cd ~/hermes-whalechan
-python3 apply.py            # 装 / 更新（先自动备份）
+python3 apply.py            # 装 / 强制同步人设（先自动备份）
 python3 apply.py --check    # 只对比
 python3 apply.py --revert   # 回滚到最近一次备份
 ```
 
 `apply.py` 做三件事：
 
-1. 合成 `persona/{prefix,user,suffix}.md` → `~/.hermes/config.yaml` 的 `personalities.whalechan`
+1. 合成 `plugins/whalechan/persona/{prefix,user,suffix}.md` → `agent.personalities.whalechan`
 2. 把 `display.personality` 设成 `whalechan`
-3. 把 `plugins/whalechan` 同步进 `~/.hermes/plugins/whalechan`
+3. 把 `plugins/whalechan`（含 `persona/`）同步进 `~/.hermes/plugins/whalechan`
 
-改完人设或插件后重跑一次。**personality 是会话级拼进 system prompt 的**：网关（Telegram 等）下一条消息生效，
-桌面 / TUI 要新会话，或者用 `/personality whalechan` 重选一次。
+**人设自举只发生一次**：插件首次加载时，如果 `agent.personalities.whalechan` 不存在就写入并选中；
+之后你把它删了（比如 `/personality none` 再手改 config），它不会再抢回来。
+要重新装，跑 `/whalechan sync`；人设和插件不一致时（你手改过）也不会自动覆盖，只提示。
+
+新会话之后人设才生效：网关（Telegram 等）下一条消息就带，桌面 / TUI 要新会话，
+或者用 `/personality whalechan` 重选一次。
 
 ---
 
@@ -34,13 +49,25 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 （`agent/turn_context.py`：`effective_system = effective_system + "\n\n" + ephemeral_system_prompt`）。
 位置本身就是最强的约束——这也是上游 v0.3.0 把硬规矩拆成 `suffix` 想要的效果。
 
-所以本仓库的分工是：
+### 为什么人设留在 personality，不塞进插件
+
+插件能往 system prompt 里写字，但只有一个口子 `register_system_prompt_section`，三条硬限制：
+
+| 限制 | 事实（源码位置） |
+| --- | --- |
+| 位置 | `position` 只允许 `after_memory`（`hermes_cli/plugins_dispatch.py`），渲染顺序是 `skills → memory → 插件段落 → profile → 时间戳 → 环境提示`（`agent/system_prompt.py`）——**不是末尾** |
+| 长度 | 单节 4000 字符、总量 8000（`plugins_dispatch.py`）；人设现在 3471 字，加两句就顶墙 |
+| 生效 | 接口 docstring 写明 "frozen into each new session prompt"——会话级冻结；而 personality 是 API 调用时拼的，下一轮就换 |
+
+所以人设留在 `agent.personalities.whalechan`，插件只负责**把它装进去**（自举 + `/whalechan sync`）。
+
+人设三段的拼法：
 
 | 文件 | 装什么 | 拼在哪 |
 | --- | --- | --- |
-| `persona/prefix.md` | 身份、说话方式、性格、情绪、心思、表达、干活节奏、表情包规则 | 最前 |
-| `persona/user.md` | 你自己的追加设定（称呼、口癖、额外规矩），留空即无 | 中间 |
-| `persona/suffix.md` | 每轮硬规矩：出声报进度、收尾三段、找帮手、悄悄话、中文思考 | **最后** |
+| `plugins/whalechan/persona/prefix.md` | 身份、说话方式、性格、情绪、心思、表达、干活节奏、表情包规则 | 最前 |
+| `plugins/whalechan/persona/user.md` | 你自己的追加设定（称呼、口癖、额外规矩），留空即无 | 中间 |
+| `plugins/whalechan/persona/suffix.md` | 每轮硬规矩：出声报进度、收尾三段、找帮手、悄悄话、中文思考 | **最后** |
 
 只写 prefix 的话，规矩全挤在提示词开头，聊过几十轮口气会飘回正式腔；suffix 落在最后一段，位置本身就是约束。
 
@@ -58,13 +85,14 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 调概率有两个入口。会话里直接发斜杠命令（Hermes 插件没有 web route，上游 v0.3.1 的浏览器设置页在这里换成了命令）：
 
 ```
-/whalechan                 # 看当前状态
+/whalechan                 # 看当前状态（含人设同步情况）
 /whalechan 80              # 概率改 80%
 /whalechan off             # 关
 /whalechan on              # 开
 /whalechan custom <文本>    # 写追加设定（≤2000 字）
 /whalechan custom          # 看写了什么
 /whalechan custom clear    # 清空
+/whalechan sync            # 强制把人设重新写进 config（覆盖手改）
 ```
 
 或者直接改 `~/.hermes/plugins/whalechan/config.json`：
@@ -91,7 +119,7 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 
 | 位置 | 谁管 | 生效时机 | 适合 |
 | --- | --- | --- | --- |
-| `persona/user.md` | 跟着仓库走，`apply.py` 合成进 personality | 新会话 | 长期固定的称呼、口癖、规矩，跨机器同步 |
+| `plugins/whalechan/persona/user.md` | 跟着插件走，自举 / `/whalechan sync` 写进 personality | 新会话 | 长期固定的称呼、口癖、规矩，跨机器同步 |
 | `config.json` 的 `custom` / `/whalechan custom` | 只在这台机器 | 下一轮 | 临时试效果，或者不想动仓库 |
 
 两边都写会叠加，`custom` 在 user message 里、位置更靠后。
@@ -106,14 +134,18 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 
 ```
 hermes-whalechan/
-├── persona/            人设三段（见上表）
-├── plugins/whalechan/
-│   ├── __init__.py     sticker 工具 + pre_llm_call 掷骰
-│   ├── chance.py       掷骰纯逻辑（不依赖 Hermes，可单测）
-│   ├── stickers.py     图库索引下载 / 缓存 / 模糊匹配
+├── plugins/whalechan/          ← 插件本体，GitHub 装的就是这个子目录
+│   ├── __init__.py             sticker 工具 + pre_llm_call 掷骰 + /whalechan
+│   ├── chance.py               掷骰纯逻辑（不依赖 Hermes，可单测）
+│   ├── persona.py              人设合成 + 自举写入 config（纯逻辑，可单测）
+│   ├── persona/                人设三段（见上表；跟着插件走，装子目录才带得上）
+│   │   ├── prefix.md
+│   │   ├── user.md
+│   │   └── suffix.md
+│   ├── stickers.py             图库索引下载 / 缓存 / 模糊匹配
 │   └── plugin.yaml
-├── tests/              python3 -m unittest discover -s tests
-└── apply.py            幂等安装 / 检查 / 回滚
+├── tests/                      python3 -m unittest discover -s tests
+└── apply.py                    幂等安装 / 检查 / 回滚（从源码装时用）
 ```
 
 ---

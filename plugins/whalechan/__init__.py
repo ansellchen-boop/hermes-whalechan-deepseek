@@ -7,7 +7,10 @@ Hermes 的插件接口上：
 * 每轮掷骰（上游 v0.3.1 的 ``agent/pre-step``）：命中时通过 ``pre_llm_call``
   往这一轮的 user message 前面塞一行提示，人设据此决定发不发。
 
-人设本身走 Hermes 的 ``personalities.whalechan``（本仓库的 persona/ 目录）。
+人设本身走 Hermes 的 ``personalities.whalechan``，但文本是插件自带的
+``persona/`` 三段：首次加载时 ``persona.bootstrap()`` 自动写进 config，
+之后改人设用 ``/whalechan sync``。为什么不能塞进 ``register_system_prompt_section``
+（位置只允许 after_memory、4000 字上限、会话级冻结）见 ``persona.py`` 顶部说明。
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import chance
+from . import chance, persona
 from .stickers import STICKER_TYPES, load_archive, search_stickers
 
 log = logging.getLogger("whalechan")
@@ -119,8 +122,25 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
 
 _USAGE = (
     "用法：/whalechan 80 · /whalechan off · /whalechan on · "
-    "/whalechan custom <文本> · /whalechan custom clear"
+    "/whalechan custom <文本> · /whalechan custom clear · /whalechan sync"
 )
+
+
+def _persona_line() -> str:
+    """状态行：插件里多少字、config 里多少字、选中没有。"""
+    try:
+        info = persona.status()
+    except Exception as exc:  # noqa: BLE001 - 读配置失败不该让状态命令挂掉
+        return f"人设：读不到配置（{exc}）"
+    head = f"人设：插件自带 {info['local_chars']} 字"
+    if not info["config_chars"]:
+        return f"{head} · config 里没装 → /whalechan sync"
+    where = f"config {info['config_chars']} 字（{info['source']}），display.personality={info['display'] or '(空)'}"
+    if not info["same"]:
+        return f"{head} · {where} → 和插件不一致，/whalechan sync 同步"
+    if info["display"] != persona.PERSONALITY_NAME:
+        return f"{head} · {where} → 没选中，/whalechan sync 会重选"
+    return f"{head} · 已同步（{where}）"
 
 
 def _cmd_whalechan(raw_args: str = "") -> str:
@@ -134,9 +154,12 @@ def _cmd_whalechan(raw_args: str = "") -> str:
         return (
             f"表情包掷骰：{state} · 概率 {config.get('probability')}%\n"
             f"追加设定：{len(custom)}/{chance.DEFAULT_CUSTOM_MAX} 字，{tail}\n"
+            f"{_persona_line()}\n"
             f"{_USAGE}"
         )
     lowered = args.lower()
+    if lowered in {"sync", "sync force", "重装"}:
+        return persona.bootstrap(force=True)["message"]
     if lowered in {"off", "关"}:
         config = chance.save_config({"enabled": False})
         return "表情包掷骰：关。要开回来就 /whalechan on"
@@ -177,6 +200,12 @@ def register(ctx: Any) -> None:
     ctx.register_command(
         "whalechan",
         _cmd_whalechan,
-        description="鲸鱼娘表情包设置：概率 / 开关 / 追加设定",
-        args_hint="[80|off|on|custom <文本>]",
+        description="鲸鱼娘表情包设置：概率 / 开关 / 追加设定 / 人设同步",
+        args_hint="[80|off|on|custom <文本>|sync]",
     )
+    # 人设自举：只在「config 里从没装过」时写一次。失败不能拖垮插件加载。
+    try:
+        result = persona.bootstrap()
+        log.info("whalechan: 人设 %s（%s 字）— %s", result["action"], result["chars"], result["message"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("whalechan: 人设自举失败（插件其余功能照常）: %s", exc)

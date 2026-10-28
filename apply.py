@@ -2,9 +2,13 @@
 """把本仓库的鲸鱼娘人设和 whalechan 插件装进本机 Hermes（幂等，可反复跑）。
 
 做三件事：
-1. 合成 persona/{prefix,user,suffix}.md → `config.yaml` 的 `personalities.whalechan`
+1. 合成 `plugins/whalechan/persona/{prefix,user,suffix}.md`（人设跟着插件目录走）
+   → `config.yaml` 的 `agent.personalities.whalechan`
 2. 把 `display.personality` 设成 `whalechan`
-3. 把 `plugins/whalechan` 同步进 `<HERMES_HOME>/plugins/whalechan`
+3. 把 `plugins/whalechan`（含 persona/）同步进 `<HERMES_HOME>/plugins/whalechan`
+
+插件自己也会在首次加载时做第 1、2 步（只在 config 里从没装过时），
+所以正常情况下 `hermes plugins install` 装完就够了；这个脚本负责强制同步和回滚。
 
 用法：
     python3 apply.py              # 装 / 更新（先自动备份）
@@ -12,8 +16,8 @@
     python3 apply.py --dry-run    # 说清楚要改什么，不落盘
     python3 apply.py --revert     # 回滚到最近一次备份
 
-改完人设或插件后重跑一次；personality 是会话级拼进 system prompt 的，
-老会话不重开看不到新文本（网关侧下一条消息生效，桌面/TUI 要新会话）。
+改完人设或插件后重跑一次；personality 是 API 调用时拼进 system prompt 最末尾的，
+网关下一条消息生效，桌面/TUI 要新会话（或 `/personality whalechan` 重选一次）。
 """
 
 from __future__ import annotations
@@ -21,7 +25,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import shutil
 import sys
 import tarfile
@@ -33,36 +36,29 @@ HERMES_HOME = Path.home() / ".hermes"
 CONFIG = HERMES_HOME / "config.yaml"
 BACKUP_DIR = HERMES_HOME / "backups" / "whalechan"
 
-PERSONA = ROOT / "persona"
+#: 人设三段在插件目录里（不是仓库根）：从 GitHub 装 `…/plugins/whalechan` 子目录时，
+#: 只有插件目录内的文件才带得上，所以人设必须住在那儿。
 PLUGIN_SRC = ROOT / "plugins" / "whalechan"
 PLUGIN_DST = HERMES_HOME / "plugins" / "whalechan"
+PERSONA = PLUGIN_SRC / "persona"
 
-PLUGIN_FILES = ("__init__.py", "chance.py", "stickers.py", "plugin.yaml")
-TARGET_KEYS = ("personalities.whalechan", "display.personality")
+PLUGIN_FILES = ("__init__.py", "chance.py", "persona.py", "stickers.py", "plugin.yaml")
+TARGET_KEYS = ("agent.personalities.whalechan", "display.personality")
 
 
 # ---------------------------------------------------------------- persona 合成
 
 
-def _strip_comments(text: str) -> str:
-    """去掉 HTML 注释，免得模板里的示例混进提示词。"""
-    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
-
-
-def _read(path: Path) -> str:
-    if not path.is_file():
-        return ""
-    return _strip_comments(path.read_text(encoding="utf-8")).strip()
-
-
 def compose_persona() -> str:
-    """prefix → 用户自定义 → suffix（硬规矩压在最末，位置本身就是约束）。"""
-    parts = [
-        _read(PERSONA / "prefix.md"),
-        _read(PERSONA / "user.md"),
-        _read(PERSONA / "suffix.md"),
-    ]
-    return "\n\n".join(part for part in parts if part) + "\n"
+    """prefix → 用户自定义 → suffix（硬规矩压在最末，位置本身就是约束）。
+
+    实现在插件里（``plugins/whalechan/persona.py``），脚本只借用——
+    这样「插件自举」和「手动同步」永远合出同一段文本，不会两份逻辑漂。
+    """
+    sys.path.insert(0, str(PLUGIN_SRC))
+    import persona as plugin_persona  # noqa: PLC0415 - 插件目录要先进 sys.path
+
+    return plugin_persona.compose(PERSONA)
 
 
 # ---------------------------------------------------------------- config 读写
@@ -92,8 +88,11 @@ def _write_key(dotted: str, value) -> None:
 
 def current_state() -> dict:
     data = _load_yaml()
+    # agent.personalities 是 hermes_cli.personality 优先读的那层；顶层 personalities
+    # 是历史形状（#643），两者都认，同名时 agent 层赢。这里照同样规则读回旧值。
+    persona = _dig(data, "agent.personalities.whalechan") or _dig(data, "personalities.whalechan") or ""
     return {
-        "persona": _dig(data, "personalities.whalechan") or "",
+        "persona": persona,
         "personality": _dig(data, "display.personality") or "",
     }
 
@@ -124,8 +123,11 @@ def revert() -> int:
         print(f"没有备份可回滚：{BACKUP_DIR}")
         return 1
     state = json.loads(meta.read_text(encoding="utf-8"))
-    _write_key("personalities.whalechan", state.get("persona") or None)
+    _write_key(TARGET_KEYS[0], state.get("persona") or None)
     _write_key("display.personality", state.get("personality") or None)
+    if _dig(_load_yaml(), "personalities.whalechan") is not None:
+        _write_key("personalities.whalechan", None)
+    # 回滚也要把人设目录一起还原：旧备份（v0.3 之前）只有插件文件，没有 persona/
     archive = _latest("plugin-*.tar.gz")
     if archive:
         if PLUGIN_DST.exists():
@@ -144,6 +146,16 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
+def _dir_digest(path: Path) -> str:
+    """目录内容指纹：按文件名排序喂进 sha256，只算普通文件。"""
+    digest = hashlib.sha256()
+    for item in sorted(path.glob("*")):
+        if item.is_file():
+            digest.update(item.name.encode("utf-8"))
+            digest.update(item.read_bytes())
+    return digest.hexdigest()[:12]
+
+
 def plugin_drift() -> list[str]:
     drift = []
     for name in PLUGIN_FILES:
@@ -152,6 +164,11 @@ def plugin_drift() -> list[str]:
             drift.append(f"{name}: 未安装")
         elif _digest(src) != _digest(dst):
             drift.append(f"{name}: 内容不同")
+    dst_persona = PLUGIN_DST / "persona"
+    if not dst_persona.is_dir():
+        drift.append("persona/: 未安装")
+    elif _dir_digest(PERSONA) != _dir_digest(dst_persona):
+        drift.append("persona/: 内容不同")
     return drift
 
 
@@ -159,6 +176,11 @@ def install_plugin() -> None:
     PLUGIN_DST.mkdir(parents=True, exist_ok=True)
     for name in PLUGIN_FILES:
         shutil.copy2(PLUGIN_SRC / name, PLUGIN_DST / name)
+    # 人设三段必须跟着插件走：从 GitHub 装子目录时也只带插件目录里的文件。
+    dst_persona = PLUGIN_DST / "persona"
+    dst_persona.mkdir(parents=True, exist_ok=True)
+    for item in PERSONA.glob("*.md"):
+        shutil.copy2(item, dst_persona / item.name)
     # 只在配置不存在时放一份示例；已有配置绝不覆盖（用户可能调过概率）
     example = PLUGIN_SRC / "config.example.json"
     target = PLUGIN_DST / "config.json"
@@ -209,8 +231,11 @@ def main() -> int:
 
     meta = backup()
     print(f"备份: {meta}")
-    _write_key("personalities.whalechan", persona)
+    _write_key(TARGET_KEYS[0], persona)
     _write_key("display.personality", "whalechan")
+    # 顶层 personalities 是历史形状（#643）；统一放 agent 层后把旧键清掉，别留两份打对台。
+    if _dig(_load_yaml(), "personalities.whalechan") is not None:
+        _write_key("personalities.whalechan", None)
     install_plugin()
 
     state = current_state()
