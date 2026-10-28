@@ -1,4 +1,4 @@
-# hermes-whalechan
+# hermes-whalechan-deepseek
 
 给 Hermes Agent 的**鲸鱼娘（Whale-chan / DeepSeek娘）**预设：完整干活能力 + 人设，开工吐槽、收工讨饭，按宿主掷骰发表情包。
 
