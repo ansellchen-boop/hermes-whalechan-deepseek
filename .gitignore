@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# 本机实际配置，不进仓库（模板是 config.example.json）
+plugins/whalechan/config.json
