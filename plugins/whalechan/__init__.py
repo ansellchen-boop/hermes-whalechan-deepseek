@@ -111,8 +111,16 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         if custom:
             parts.append(f"{chance.CUSTOM_HEADER}\n\n{custom}")
         platform = str(kwargs.get("platform") or "")
-        if chance.should_fire(config, platform=platform):
+        # 两条骰子互相独立：表情包管「发不发图」，节拍管「嘴还在不在」。
+        sticker_hit = chance.should_fire(config, platform=platform)
+        beat_hit = chance.should_fire_beat(config, platform=platform)
+        if sticker_hit:
             parts.append(chance.HIT_CONTEXT)
+        if beat_hit:
+            parts.append(chance.BEAT_CONTEXT)
+        # 命中记录：注入的这行不进 state.db 的 user message，事后无法从库里
+        # 区分「命中轮」和「未命中轮」，也就没法判断节拍骰到底有没有用。
+        _log_roll(platform=platform, beat=beat_hit, sticker=sticker_hit)
         if parts:
             return {"context": "\n\n".join(parts)}
     except Exception as exc:  # noqa: BLE001
@@ -120,8 +128,31 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     return None
 
 
+#: 命中日志：一行一次掷骰，测量脚本按时间戳跟 state.db 的回合对齐做 A/B。
+ROLL_LOG = "roll-log.jsonl"
+_ROLL_LOG_MAX_BYTES = 512 * 1024
+
+
+def _log_roll(*, platform: str, beat: bool, sticker: bool) -> None:
+    """追加一行命中记录。写失败只记 debug，绝不影响这一轮。"""
+    try:
+        path = chance.config_path().with_name(ROLL_LOG)
+        if path.is_file() and path.stat().st_size > _ROLL_LOG_MAX_BYTES:
+            path.unlink()  # 半兆够几千轮，真撞上了从头再来，测量窗口自己重开
+        import json
+        import time
+
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(
+                {"ts": time.time(), "platform": platform, "beat": beat, "sticker": sticker},
+                ensure_ascii=False,
+            ) + "\n")
+    except Exception as exc:  # noqa: BLE001
+        log.debug("whalechan: 命中日志写不了（不影响掷骰）: %s", exc)
+
+
 _USAGE = (
-    "用法：/whalechan 80 · /whalechan off · /whalechan on · "
+    "用法：/whalechan 80 · /whalechan off · /whalechan on · /whalechan beat 55 · "
     "/whalechan custom <文本> · /whalechan custom clear · /whalechan sync"
 )
 
@@ -153,6 +184,7 @@ def _cmd_whalechan(raw_args: str = "") -> str:
         tail = f"「{custom[:24]}…」" if len(custom) > 24 else (f"「{custom}」" if custom else "空")
         return (
             f"表情包掷骰：{state} · 概率 {config.get('probability')}%\n"
+            f"人设节拍：{config.get('beat_probability')}%（0 关；跟表情包互相独立）\n"
             f"追加设定：{len(custom)}/{chance.DEFAULT_CUSTOM_MAX} 字，{tail}\n"
             f"{_persona_line()}\n"
             f"{_USAGE}"
@@ -178,6 +210,16 @@ def _cmd_whalechan(raw_args: str = "") -> str:
             return _USAGE
         config = chance.save_config({"custom": text})
         return f"追加设定已写入（{len(config.get('custom') or '')} 字），下一轮生效。"
+    if lowered.startswith("beat"):
+        text = args[len("beat"):].strip()
+        if not text:
+            return f"人设节拍：{config.get('beat_probability')}%（0 关，100 每轮都提醒）"
+        try:
+            value = float(text)
+        except ValueError:
+            return f"看不懂「{text}」。" + _USAGE
+        config = chance.save_config({"beat_probability": value})
+        return f"人设节拍钉在 {config.get('beat_probability')}%（0 关；跟表情包那条骰子各掷各的）"
     try:
         value = float(args)
     except ValueError:
@@ -201,7 +243,7 @@ def register(ctx: Any) -> None:
         "whalechan",
         _cmd_whalechan,
         description="鲸鱼娘表情包设置：概率 / 开关 / 追加设定 / 人设同步",
-        args_hint="[80|off|on|custom <文本>|sync]",
+        args_hint="[80|off|on|beat 55|custom <文本>|sync]",
     )
     # 人设自举：只在「config 里从没装过」时写一次。失败不能拖垮插件加载。
     try:

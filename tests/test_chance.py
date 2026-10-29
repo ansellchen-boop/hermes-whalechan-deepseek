@@ -102,5 +102,40 @@ class CustomTest(unittest.TestCase):
             self.assertTrue(path.exists())
 
 
+class BeatTest(unittest.TestCase):
+    """人设节拍骰：独立于表情包开关，0 = 关。"""
+
+    def test_default_beat_is_fifty_five(self):
+        config = chance.load_config(Path(tempfile.gettempdir()) / "no-such-whalechan.json")
+        self.assertEqual(config["beat_probability"], 55.0)
+
+    def test_zero_beat_never_fires(self):
+        config = {"beat_probability": 0.0, "sources": []}
+        rng = random.Random(1)
+        self.assertFalse(any(chance.should_fire_beat(config, rng=rng) for _ in range(300)))
+
+    def test_beat_ignores_sticker_switch(self):
+        # 关表情包的人多半只是不想发图，不该顺带被改成客服腔
+        config = {"enabled": False, "probability": 0.0, "beat_probability": 100.0, "sources": []}
+        self.assertFalse(chance.should_fire(config))
+        self.assertTrue(chance.should_fire_beat(config))
+
+    def test_beat_sources_filter(self):
+        config = {"beat_probability": 100.0, "sources": ["telegram"]}
+        self.assertFalse(chance.should_fire_beat(config, platform="desktop"))
+        self.assertTrue(chance.should_fire_beat(config, platform="telegram"))
+        self.assertTrue(chance.should_fire_beat(config, platform=""))
+
+    def test_beat_save_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            config = chance.save_config({"beat_probability": 12.34}, path)
+            self.assertEqual(config["beat_probability"], 12.3)
+            # 表情包那条概率不该被顺手改掉
+            self.assertEqual(config["probability"], 66.6)
+            config = chance.save_config({"beat_probability": 0}, path)
+            self.assertEqual(config["beat_probability"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

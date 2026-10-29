@@ -25,12 +25,25 @@ HIT_CONTEXT = (
     "按这一刻的场景调一次 sticker，只发一张，放在情绪那句旁边或回复末尾；结论、代码、命令照常写。"
 )
 
+#: 人设节拍骰：表情包讲的是「发不发图」，这条讲的是「嘴还在不在」。
+#: 口癖 / 内心戏没有闸门时会被历史自举稀释到零（实测 73% → 20%），
+#: 所以给它一条跟表情包互相独立的骰子，每轮新鲜、随机、不依赖历史。
+DEFAULT_BEAT_PROBABILITY = 55.0
+
+BEAT_CONTEXT = (
+    "🎭 人设节拍：本轮至少一处口癖（唔/诶/嘛这种）＋ 一处内心戏或小动作（括号里十个字以内），"
+    "位置你自己挑——开头那句嘀咕、踩坑那一下、收尾讨饭都行；"
+    "技术结论、代码、命令、报错原文照常写，别为了味道省掉信息。"
+)
+
 #: 追加设定的标题；只有用户写了内容才会注入。
 CUSTOM_HEADER = "## 追加设定（用户后加的；与上面的角色设定冲突时，以这里为准）"
 
 DEFAULTS: dict[str, Any] = {
     "enabled": True,
     "probability": DEFAULT_PROBABILITY,
+    # 人设节拍骰：跟 enabled / probability 互相独立——关掉表情包不代表要变回客服腔。
+    "beat_probability": DEFAULT_BEAT_PROBABILITY,
     # 空列表 = 所有来源都参与；填了就只在这些 platform 上掷骰。
     "sources": [],
     # 用户自定义设定：追加进每轮的 system 侧提示，留空即无。
@@ -78,6 +91,8 @@ def load_config(path: Path | str | None = None) -> dict[str, Any]:
         config["enabled"] = bool(raw["enabled"])
     if "probability" in raw:
         config["probability"] = clamp_probability(raw["probability"])
+    if "beat_probability" in raw:
+        config["beat_probability"] = clamp_probability(raw["beat_probability"], DEFAULT_BEAT_PROBABILITY)
     sources = raw.get("sources")
     if isinstance(sources, list):
         config["sources"] = [str(item) for item in sources if str(item).strip()]
@@ -105,6 +120,8 @@ def save_config(patch: dict[str, Any], path: Path | str | None = None) -> dict[s
         raw["enabled"] = bool(incoming["enabled"])
     if "probability" in incoming:
         raw["probability"] = clamp_probability(incoming["probability"])
+    if "beat_probability" in incoming:
+        raw["beat_probability"] = clamp_probability(incoming["beat_probability"], DEFAULT_BEAT_PROBABILITY)
     if "sources" in incoming and isinstance(incoming["sources"], list):
         raw["sources"] = [str(item) for item in incoming["sources"] if str(item).strip()]
     if "custom" in incoming:
@@ -134,3 +151,16 @@ def should_fire(
     if sources and platform and platform not in sources:
         return False
     return roll(float(config.get("probability", DEFAULT_PROBABILITY)), rng=rng)
+
+
+def should_fire_beat(
+    config: dict[str, Any],
+    platform: str = "",
+    rng: random.Random | None = None,
+) -> bool:
+    """人设节拍骰：故意不看 ``enabled``——关掉表情包的人多半只是不想发图，
+    不该顺带被改成客服腔。只认 ``beat_probability``（0 = 关）和来源过滤。"""
+    sources = config.get("sources") or []
+    if sources and platform and platform not in sources:
+        return False
+    return roll(float(config.get("beat_probability", DEFAULT_BEAT_PROBABILITY)), rng=rng)

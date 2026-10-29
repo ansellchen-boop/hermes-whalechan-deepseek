@@ -86,9 +86,10 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 
 ```
 /whalechan                 # 看当前状态（含人设同步情况）
-/whalechan 80              # 概率改 80%
-/whalechan off             # 关
-/whalechan on              # 开
+/whalechan 80              # 表情包概率改 80%
+/whalechan off             # 关表情包
+/whalechan on              # 开表情包
+/whalechan beat 55         # 人设节拍概率改 55%（0 关，跟表情包互相独立）
 /whalechan custom <文本>    # 写追加设定（≤2000 字）
 /whalechan custom          # 看写了什么
 /whalechan custom clear    # 清空
@@ -101,6 +102,7 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 {
   "enabled": true,
   "probability": 66.6,
+  "beat_probability": 55,
   "sources": [],
   "custom": ""
 }
@@ -108,12 +110,42 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 
 | 字段 | 说明 |
 | --- | --- |
-| `enabled` | `false` 彻底关掉掷骰（工具还在，人设不会再主动发） |
+| `enabled` | `false` 彻底关掉表情包掷骰（工具还在，人设不会再主动发） |
 | `probability` | 0–100，保留一位小数；0 永不发，100 每轮都发 |
+| `beat_probability` | 人设节拍骰，0–100，默认 55；**0 = 关**，建议区间 40–70 |
 | `sources` | 空数组 = 所有平台都掷；填了就只在这些 `platform` 上掷（如 `["telegram"]`） |
 | `custom` | 追加设定，≤2000 字；非空时每轮以「追加设定」小节注入，和掷骰提示共用同一次 `pre_llm_call` |
 
 改完配置下一轮就生效，不用重启。
+
+## 人设节拍骰（治「聊十轮就变客服」）
+
+口癖、吐槽、内心戏这些**没有闸门**的行为会随会话变长一路衰减，实测（18 个会话、137 轮）：
+
+| 会话内轮次 | 口癖率 | 内心戏/小动作 | 表情包调用 |
+| --- | --- | --- | --- |
+| 1–2 | 75% | 32% | 61% |
+| 3–5 | 55% | 34% | 66% |
+| 6–10 | 31% | 35% | 69% |
+| 11–20 | 17% | 7% | 70% |
+| 21+ | 0% | 0% | 86% |
+
+同会话配对：前 3 轮 **73%** → 末 3 轮 **20%**。而表情包因为有宿主的 66.6% 骰子，一点没退。
+
+原因不是模型忘了人设（人设是 `personality`，每轮都拼在 system prompt 最末尾），
+而是**历史里再也没有新鲜信号**：模型每轮模仿自己最近几轮的输出，前几轮淡一点，
+后面就照着淡的演，正反馈一路降到零。压缩（`compression.threshold: 0.5`）还会把
+早期带口癖的原文压成纯技术摘要（`agent/context_compressor.py` 的
+`_summary_template_sections` 十节模板里没有一节保留语气），进一步断掉参照。
+
+所以给人设补一条**跟表情包互相独立的宿主骰**：
+
+- 每轮 `pre_llm_call` 掷一次，命中就在 user message 前塞一行
+  `🎭 人设节拍：本轮至少一处口癖 … ＋ 一处内心戏或小动作 …`
+- 它每轮新鲜、随机、不依赖历史，压缩和自举漂移都伤不到它
+- 不看 `enabled`（关表情包的人多半只是不想发图，不该顺带被改成客服腔）
+- 子代理会话不掷（同表情包），`sources` 过滤照旧
+- 概率是**宿主侧**的，不写进人设——写进 prompt 会变成日程表，读起来比不卖萌还假
 
 **两套追加设定的区别**（别写重复了）：
 
