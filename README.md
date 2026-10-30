@@ -38,6 +38,10 @@ python3 apply.py --revert   # 回滚到最近一次备份
 之后你把它删了（比如 `/personality none` 再手改 config），它不会再抢回来。
 要重新装，跑 `/whalechan sync`；人设和插件不一致时（你手改过）也不会自动覆盖，只提示。
 
+`sync` 只动文本，不动开关：你把 `display.personality` 换成了别人，它只提醒一句、不会帮你切回来
+（真要换回来跑 `/personality whalechan`）；config 里那段如果是结构化（dict）人设，`sync` 直接拒绝，
+不会拿纯文本把它顶掉。
+
 新会话之后人设才生效：网关（Telegram 等）下一条消息就带，桌面 / TUI 要新会话，
 或者用 `/personality whalechan` 重选一次。
 
@@ -77,7 +81,8 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 
 发不发表情包**由宿主决定**，不靠模型自觉（上游 v0.3.1 的做法）。
 
-- 每轮开头 `pre_llm_call` 掷一次骰，命中就在这一轮的 user message 前面塞一行
+- 每轮开头 `pre_llm_call` 掷一次骰，命中就在这一轮的 user message **末尾追加**一行
+  （宿主是 `content + "\n\n" + injection`，不是插在前面）
   `🎲 表情包掷骰：命中（本轮）…`
 - 人设认这句话：收到就调一次 `sticker`，只发一张；没收到就不发、也不调工具
 - 子代理会话不掷骰（有 `parent_session_id` 就跳过），免得子任务也去发表情包
@@ -93,7 +98,7 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 /whalechan custom <文本>    # 写追加设定（≤2000 字）
 /whalechan custom          # 看写了什么
 /whalechan custom clear    # 清空
-/whalechan sync            # 强制把人设重新写进 config（覆盖手改）
+/whalechan sync            # 强制把人设文本重新写进 config（覆盖手改；不动 display.personality）
 ```
 
 或者直接改 `~/.hermes/plugins/whalechan/config.json`：
@@ -140,8 +145,11 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 
 所以给人设补一条**跟表情包互相独立的宿主骰**：
 
-- 每轮 `pre_llm_call` 掷一次，命中就在 user message 前塞一行
-  `🎭 人设节拍：本轮至少一处口癖 … ＋ 一处内心戏或小动作 …`
+- 每轮 `pre_llm_call` 掷一次，命中就在 user message **末尾追加**一行（不是插在前面，同表情包那节）
+- 指令有 5 套说法，命中时随机取一条（`chance.BEAT_CONTEXTS` / `chance.pick_beat()`）：
+  同一句话原样重复十遍会被历史自举磨成背景噪音——频率不动，动的是新鲜度
+- **会话前两轮强制命中**（`should_fire_beat(early=True)`，`beat_probability=0` 时除外）：
+  这两轮是后面几十轮的参照样本，掉一次要很久才拉得回来
 - 它每轮新鲜、随机、不依赖历史，压缩和自举漂移都伤不到它
 - 不看 `enabled`（关表情包的人多半只是不想发图，不该顺带被改成客服腔）
 - 子代理会话不掷（同表情包），`sources` 过滤照旧

@@ -79,12 +79,6 @@ def compose(root: Path | str | None = None) -> str:
 # ---------------------------------------------------------------- 读 config
 
 
-def _load_yaml() -> Any:
-    import yaml
-
-    return yaml.safe_load(config_file().read_text(encoding="utf-8")) if config_file().is_file() else {}
-
-
 def _load_doc(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -114,7 +108,10 @@ def _prompt_text(value: Any) -> str:
     if isinstance(value, list):
         return "\n".join(str(item).strip() for item in value if str(item).strip())
     if isinstance(value, dict):
-        return str(value).strip()
+        # 结构化人设（dict）：`str(dict)` 永远等于不了 compose() 的纯文本，
+        # 拿它比对会把配置永久判成 drift，再被 sync 直接覆盖掉。所以这里返回空，
+        # 由 read_state 标成 structured，bootstrap 遇到就拒绝覆盖。
+        return ""
     return ""
 
 
@@ -122,8 +119,10 @@ def read_state(config_path: Path | str | None = None) -> dict[str, Any]:
     """读当前配置：人设文本、它在哪一层、``display.personality``。"""
     path = Path(config_path) if config_path else config_file()
     data = _load_doc(path)
-    agent_value = _prompt_text(_dig(data, f"agent.personalities.{PERSONALITY_NAME}"))
-    root_value = _prompt_text(_dig(data, f"personalities.{PERSONALITY_NAME}"))
+    agent_raw = _dig(data, f"agent.personalities.{PERSONALITY_NAME}")
+    root_raw = _dig(data, f"personalities.{PERSONALITY_NAME}")
+    agent_value = _prompt_text(agent_raw)
+    root_value = _prompt_text(root_raw)
     # 和 hermes_cli.personality.available_personalities 一致：agent.personalities 优先。
     if agent_value:
         persona, source = agent_value, "agent"
@@ -137,6 +136,8 @@ def read_state(config_path: Path | str | None = None) -> dict[str, Any]:
         "source": source,
         "display": str(display).strip() if isinstance(display, (str, int, float)) else "",
         "chars": len(persona),
+        # 配置里存的是结构化人设（dict）：读不出纯文本，任何自动写入都得绕开它。
+        "structured": isinstance(agent_raw, dict) or isinstance(root_raw, dict),
     }
 
 
@@ -241,6 +242,10 @@ def bootstrap(
                 "message": f"人设文件缺失：{package_dir() / 'persona'} 里没有可用的 prefix/user/suffix"}
 
     state = read_state(path)
+    if state["structured"]:
+        return {"action": "failed", "chars": state["chars"],
+                "message": (f"config 里的 personalities.{PERSONALITY_NAME} 是结构化（dict）人设，"
+                            "插件不会拿纯文本去覆盖它；要换回插件自带文本，先手动删掉那一段再跑 sync")}
     marker = _read_marker()
     same = state["persona"].strip() == text.strip()
     selected = state["display"] == PERSONALITY_NAME
@@ -263,7 +268,10 @@ def bootstrap(
     write = writer or _default_writer
     with _Lock(state_file().with_suffix(".lock")):
         write(path, f"agent.personalities.{PERSONALITY_NAME}", text)
-        if not state["display"] or force:
+        # 只在「从来没选中过」时补一次，force 也不抢：`display.personality` 是
+        # 「用哪个人设」的开关，跟「人设文本同步」是两件事——你在 /personality
+        # 里换过别人，跑 sync 不该被切回来。
+        if not state["display"]:
             write(path, "display.personality", PERSONALITY_NAME)
 
     after = read_state(path)
@@ -271,12 +279,18 @@ def bootstrap(
     if ok:
         _write_marker(len(text))
     action = "installed" if not state["persona"] else "updated"
+    if ok and after["display"] == PERSONALITY_NAME:
+        tail = f"并已选中（display.personality={PERSONALITY_NAME}）；新会话生效"
+    elif ok:
+        tail = (f"但没动 display.personality（当前 {after['display'] or '(空)'}）——"
+                f"要用它跑 /personality {PERSONALITY_NAME}；新会话生效")
+    else:
+        tail = ""
     return {
         "action": action if ok else "failed",
         "chars": after["chars"],
         "message": (
-            f"人设已写入 agent.personalities.{PERSONALITY_NAME}（{after['chars']} 字），"
-            f"display.personality={after['display'] or '(空)'}；新会话生效"
+            f"人设已写入 agent.personalities.{PERSONALITY_NAME}（{after['chars']} 字），{tail}"
             if ok
             else "写入后回读不一致，检查 config.yaml（人设没生效，插件其余功能不受影响）"
         ),

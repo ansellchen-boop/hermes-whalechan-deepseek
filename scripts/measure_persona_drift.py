@@ -3,13 +3,16 @@
 
 配套技能：`llm-agent-behavior-tuning` 的
 `references/persona-drift-measurement.md`（数据陷阱 + 参考形状）。
-这个脚本是给本仓库用的落地版，多了两块那篇没有的：
+这个脚本是给本仓库用的落地版，多了三块那篇没有的：
 
 1. **对照组**：表情包（有宿主骰子）跟口癖（无闸门）放在同一张表里比，
    这是判断「是衰减还是错觉」的关键列。
 2. **节拍 A/B**：插件每轮往 `roll-log.jsonl` 写一行掷骰结果，
-   脚本按时间窗把它跟 state.db 的回合对齐，算出「命中轮 vs 未命中轮」
-   的口癖率差。没有这个对比，总曲线回升也说不清是哪一层起的作用。
+   脚本把它跟 state.db 的回合对齐，算出「命中轮 vs 未命中轮」的口癖率差。
+   没有这个对比，总曲线回升也说不清是哪一层起的作用。
+3. **日志对账**：日志条数 ≠ 归属条数就说明归属规则有洞。新版日志带
+   `session_id`，按会话精确归属；老日志没有 id 才退回全局时间最近邻。
+   两种归属各多少条会打出来，对不上别急着信 A/B。
 
 用法：
     python3 scripts/measure_persona_drift.py
@@ -22,6 +25,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import collections
 import json
 import os
@@ -76,6 +80,8 @@ def load_turns(db_path: Path, marker: str, since: float | None):
     if not sessions:
         return [], collections.Counter()
 
+    src_by_sid = {s["id"]: (s["source"] or "") for s in sessions}
+
     ids = [s["id"] for s in sessions]
     q = ",".join("?" * len(ids))
     rows = conn.execute(
@@ -93,20 +99,22 @@ def load_turns(db_path: Path, marker: str, since: float | None):
         buf: list[str] = []
         tools = 0
         started = 0.0
+        window: list[sqlite3.Row] = []
 
         def flush() -> None:
             if turn == 0:
                 return
             text = "\n".join(buf)
+            tone = bool(TONE.search(text))
+            inner = bool(INNER.search(text))
             turns.append(dict(
                 sid=sid, turn=turn, started=started, chars=len(text), tools=tools,
-                tone=bool(TONE.search(text)), inner=bool(INNER.search(text)),
+                platform=src_by_sid.get(sid, ""),
+                tone=tone, inner=inner, both=tone and inner,
                 fmt=bool(FORMAT.search(text)),
                 sticker=any("sticker" in (m["tool_calls"] or "") for m in window),
             ))
             buf.clear()
-
-        window: list[sqlite3.Row] = []
 
         def reset() -> None:
             window.clear()
@@ -127,12 +135,19 @@ def load_turns(db_path: Path, marker: str, since: float | None):
                 elif m["content"]:
                     buf.append(m["content"])
         flush()
-    return turns, collections.Counter({s["id"]: s["source"] for s in sessions})
+
+    # Counter 的 key 是会话 id、value 是来源（cli/desktop/telegram…）：
+    # `len(sources)` = 会话数，`sources.values()` = 来源列表。
+    return turns, collections.Counter(src_by_sid)
 
 
-def load_rolls(log_path: Path):
-    """读命中日志：[(ts, beat, sticker), ...]；文件不在就是空列表。"""
-    rolls = []
+def load_rolls(log_path: Path) -> list[dict]:
+    """读命中日志：[{ts, beat, sticker, session_id, platform, early}, ...]。
+
+    文件不在、损坏、或者某行不是对象都当空处理——日志是弱依赖，坏了不该让
+    整个测量脚本挂掉。
+    """
+    rolls: list[dict] = []
     try:
         for line in log_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -142,54 +157,97 @@ def load_rolls(log_path: Path):
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(row.get("ts"), (int, float)):
-                rolls.append((float(row["ts"]), bool(row.get("beat")), bool(row.get("sticker"))))
+            if not isinstance(row, dict) or not isinstance(row.get("ts"), (int, float)):
+                continue
+            rolls.append({
+                "ts": float(row["ts"]),
+                "beat": bool(row.get("beat")),
+                "sticker": bool(row.get("sticker")),
+                "session_id": str(row.get("session_id") or ""),
+                "platform": str(row.get("platform") or ""),
+                "early": bool(row.get("early")),
+            })
     except OSError:
         pass
-    return sorted(rolls)
+    rolls.sort(key=lambda r: r["ts"])
+    return rolls
 
 
-def attach_rolls(turns, rolls, max_gap: float = 3 * 3600.0) -> None:
-    """把每条掷骰记录归给时间上最近的前一个回合（每条记录只用一次）。
+def attach_rolls(turns, rolls, max_gap: float = 3 * 3600.0) -> dict:
+    """把每条掷骰记录归给对应回合，返回对账统计。
+
+    优先按 `session_id` 精确归属：新日志每条都带宿主传的 session_id（见
+    `agent/turn_context.py` 的 `_invoke_hook("pre_llm_call", ...)`），在同会话内取
+    时间上最近的前一个回合，别的会话抢不走。老日志没有 id 才退回全局时间最近邻。
 
     不要用「[本回合起始, 下回合起始) 窗口」那种写法：会话的最后一回合没有下界，
     窗口会一路延伸到 t=∞，把之后所有别的会话的掷骰都吞进来——实测把 1 条日志
-    匹配成了 21 个回合。改成最近邻归属，每条记录恰好落在一个回合里。
+    匹配成了 21 个回合。
     """
     for t in turns:
         t["beat_any"] = False
         t["sticker_any"] = False
+        t["early_any"] = False
         t["rolls"] = 0
-    if not turns or not rolls:
-        return
 
-    import bisect
+    stats = {"logged": len(rolls), "matched": 0, "unmatched": 0,
+             "by_session": 0, "by_time": 0, "sid_miss_then_time": 0}
+    if not turns or not rolls:
+        return stats
+
+    by_sid: dict[str, list[dict]] = collections.defaultdict(list)
+    for t in turns:
+        by_sid[t["sid"]].append(t)
+    for group in by_sid.values():
+        group.sort(key=lambda t: t["started"])
+    sid_starts = {sid: [t["started"] for t in group] for sid, group in by_sid.items()}
 
     ordered = sorted(turns, key=lambda t: t["started"])
-    starts = [t["started"] for t in ordered]
-    for ts, beat, sticker in rolls:
+    all_starts = [t["started"] for t in ordered]
+
+    def pick(candidates, starts, ts):
         index = bisect.bisect_right(starts, ts) - 1
         if index < 0:
+            return None
+        turn = candidates[index]
+        return turn if ts - turn["started"] <= max_gap else None
+
+    for r in rolls:
+        ts = r["ts"]
+        turn = None
+        sid = r["session_id"]
+        if sid and sid in by_sid:
+            turn = pick(by_sid[sid], sid_starts[sid], ts)
+            if turn is not None:
+                stats["by_session"] += 1
+            else:
+                stats["sid_miss_then_time"] += 1
+        if turn is None:
+            turn = pick(ordered, all_starts, ts)
+            if turn is not None:
+                stats["by_time"] += 1
+        if turn is None:
+            stats["unmatched"] += 1
             continue
-        turn = ordered[index]
-        if ts - turn["started"] > max_gap:
-            continue
+        stats["matched"] += 1
         turn["rolls"] += 1
-        turn["beat_any"] = turn["beat_any"] or beat
-        turn["sticker_any"] = turn["sticker_any"] or sticker
+        turn["beat_any"] = turn["beat_any"] or r["beat"]
+        turn["sticker_any"] = turn["sticker_any"] or r["sticker"]
+        turn["early_any"] = turn["early_any"] or r["early"]
+    return stats
 
 
 def pct(hits: int, total: int) -> str:
     return f"{hits / total * 100:>3.0f}%" if total else "  - "
 
 
-def report(turns, sources, rolls) -> dict:
+def report(turns, sources, roll_stats: dict | None = None) -> dict:
     st = collections.defaultdict(collections.Counter)
     for t in turns:
         b = bucket(t["turn"])
         st[b]["turns"] += 1
         st[b]["chars"] += t["chars"]
-        for key in ("tone", "inner", "fmt", "sticker"):
+        for key in ("tone", "inner", "both", "fmt", "sticker"):
             st[b][key] += bool(t[key])
 
     out = {"turns": len(turns), "sessions": len(sources), "buckets": {}, "paired": None, "ab": None}
@@ -197,16 +255,16 @@ def report(turns, sources, rolls) -> dict:
     print(f"会话 {len(sources)} 个 · 回合 {len(turns)} 个 · 来源 "
           + ("、".join(f"{k}×{v}" for k, v in collections.Counter(sources.values()).most_common())
              or "无"))
-    print(f"\n{'轮次段':<7}{'回合':>5}{'口癖':>7}{'内心':>7}{'小结':>7}{'表情包':>7}{'均长':>7}")
+    print(f"\n{'轮次段':<7}{'回合':>5}{'口癖':>7}{'内心':>7}{'两者':>7}{'小结':>7}{'表情包':>7}{'均长':>7}")
     for b in BUCKETS:
         s = st[b]
         n = s["turns"]
         if not n:
             continue
-        print(f"{b:<7}{n:>5}{pct(s['tone'], n):>7}{pct(s['inner'], n):>7}"
+        print(f"{b:<7}{n:>5}{pct(s['tone'], n):>7}{pct(s['inner'], n):>7}{pct(s['both'], n):>7}"
               f"{pct(s['fmt'], n):>7}{pct(s['sticker'], n):>7}{s['chars'] / n:>7.0f}")
         out["buckets"][b] = {k: (s[k] / n if k != "chars" else s["chars"] / n) for k in
-                             ("turns", "tone", "inner", "fmt", "sticker", "chars")}
+                             ("turns", "tone", "inner", "both", "fmt", "sticker", "chars")}
 
     # 配对对比：免疫「一个超长会话拉偏平均」。
     lens = collections.Counter(t["sid"] for t in turns)
@@ -219,45 +277,74 @@ def report(turns, sources, rolls) -> dict:
         pairs.append((sum(t["tone"] for t in head) / len(head) * 100,
                       sum(t["tone"] for t in tail) / len(tail) * 100,
                       sum(t["inner"] for t in head) / len(head) * 100,
-                      sum(t["inner"] for t in tail) / len(tail) * 100))
+                      sum(t["inner"] for t in tail) / len(tail) * 100,
+                      sum(t["both"] for t in head) / len(head) * 100,
+                      sum(t["both"] for t in tail) / len(tail) * 100))
     if pairs:
         print(f"\n配对（≥8 轮的 {len(pairs)} 个会话，前 3 轮 vs 末 3 轮）：")
         print(f"  口癖 {statistics.mean(p[0] for p in pairs):>3.0f}% → "
               f"{statistics.mean(p[1] for p in pairs):>3.0f}%")
         print(f"  内心 {statistics.mean(p[2] for p in pairs):>3.0f}% → "
               f"{statistics.mean(p[3] for p in pairs):>3.0f}%")
+        print(f"  两者 {statistics.mean(p[4] for p in pairs):>3.0f}% → "
+              f"{statistics.mean(p[5] for p in pairs):>3.0f}%")
         out["paired"] = {
             "sessions": len(pairs),
             "tone_head": statistics.mean(p[0] for p in pairs),
             "tone_tail": statistics.mean(p[1] for p in pairs),
             "inner_head": statistics.mean(p[2] for p in pairs),
             "inner_tail": statistics.mean(p[3] for p in pairs),
+            "both_head": statistics.mean(p[4] for p in pairs),
+            "both_tail": statistics.mean(p[5] for p in pairs),
         }
+
+    # 日志对账：条数对不上就是归属规则有洞，A/B 先别看。
+    if roll_stats:
+        line = (f"日志对账：{roll_stats['logged']} 条掷骰记录 → 归属 {roll_stats['matched']} 条"
+                f"（按 session_id {roll_stats['by_session']} · 按时间兜底 {roll_stats['by_time']}）")
+        if roll_stats["unmatched"]:
+            line += f"，**未归属 {roll_stats['unmatched']} 条**"
+        if roll_stats["sid_miss_then_time"]:
+            line += f"；带 session_id 但会话内对不上 {roll_stats['sid_miss_then_time']} 条（已退回时间匹配）"
+        print("\n" + line)
+        out["roll_reconcile"] = dict(roll_stats)
 
     # 节拍骰 A/B：命中轮 vs 未命中轮。
     rolled = [t for t in turns if t.get("rolls")]
     if not rolled:
-        print("\n节拍 A/B：还没有命中日志（roll-log.jsonl 为空或缺）——"
+        print("\n节拍 A/B：还没有命中日志（roll-log.jsonl 为空或缺，或与会话一条都对不上）——"
               "插件跑起来一轮之后再来。")
         return out
     hit = [t for t in rolled if t["beat_any"]]
     miss = [t for t in rolled if not t["beat_any"]]
+    early_n = sum(1 for t in rolled if t.get("early_any"))
     print(f"\n节拍 A/B（有日志的 {len(rolled)} 个回合）：")
-    print(f"{'':<10}{'回合':>5}{'口癖':>7}{'内心':>7}{'均长':>7}")
+    print(f"{'组':<6}{'回合':>5}{'口癖':>7}{'内心':>7}{'两者':>7}{'均长':>7}")
     for name, group in (("命中", hit), ("未命中", miss)):
         n = len(group)
         if not n:
             continue
-        print(f"{name:<10}{n:>5}{pct(sum(t['tone'] for t in group), n):>7}"
+        print(f"{name:<6}{n:>5}{pct(sum(t['tone'] for t in group), n):>7}"
               f"{pct(sum(t['inner'] for t in group), n):>7}"
+              f"{pct(sum(t['both'] for t in group), n):>7}"
               f"{statistics.mean(t['chars'] for t in group):>7.0f}")
+    if early_n:
+        print(f"  注意：其中 {early_n} 个回合是会话前两轮（强制命中），会把命中组抬高；"
+              f"样本大后可只用 `early_any=False` 的回合重算")
     if hit and miss:
         d_tone = (sum(t["tone"] for t in hit) / len(hit) - sum(t["tone"] for t in miss) / len(miss)) * 100
-        print(f"  口癖差：{d_tone:+.0f} 个百分点（样本小时别当结论，55% 的骰子要几十轮才分得清噪声）")
+        d_both = (sum(t["both"] for t in hit) / len(hit) - sum(t["both"] for t in miss) / len(miss)) * 100
+        print(f"  口癖差 {d_tone:+.0f} 个百分点 · 两者差 {d_both:+.0f} 个百分点")
+        print("  样本量：α=0.05、power=0.8 要分清 15 个百分点（70%→85%）每组约 118 回合、"
+              "总约 214；20 个百分点（70%→90%）每组 59、总约 107。不够只当方向看。")
         out["ab"] = {
-            "hit_turns": len(hit), "miss_turns": len(miss), "tone_delta_pp": d_tone,
+            "hit_turns": len(hit), "miss_turns": len(miss),
+            "early_turns": early_n,
+            "tone_delta_pp": d_tone, "both_delta_pp": d_both,
             "hit_tone": sum(t["tone"] for t in hit) / len(hit),
             "miss_tone": sum(t["tone"] for t in miss) / len(miss),
+            "hit_both": sum(t["both"] for t in hit) / len(hit),
+            "miss_both": sum(t["both"] for t in miss) / len(miss),
         }
     return out
 
@@ -285,12 +372,12 @@ def main() -> int:
         return 0
 
     rolls = load_rolls(Path(args.log))
-    attach_rolls(turns, rolls)
-    out = report(turns, sources, rolls)
+    roll_stats = attach_rolls(turns, rolls)
+    out = report(turns, sources, roll_stats)
     out["marker"] = args.marker
     out["since"] = args.since
     out["generated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    out["rolls_logged"] = len(rolls)
+    out["rolls_logged"] = roll_stats["logged"]
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(out, ensure_ascii=False, indent=2) + "\n",

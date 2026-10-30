@@ -5,7 +5,8 @@ Hermes 的插件接口上：
 
 * ``sticker`` 工具：工具名、参数、返回的 ``![名字](链接)`` 与上游一致；
 * 每轮掷骰（上游 v0.3.1 的 ``agent/pre-step``）：命中时通过 ``pre_llm_call``
-  往这一轮的 user message 前面塞一行提示，人设据此决定发不发。
+  往这一轮的 user message **末尾**追加一行提示（宿主是 ``content + "\n\n" + injection``，
+  不是插在前面），人设据此决定发不发。
 
 人设本身走 Hermes 的 ``personalities.whalechan``，但文本是插件自带的
 ``persona/`` 三段：首次加载时 ``persona.bootstrap()`` 自动写进 config，
@@ -95,11 +96,30 @@ def _handler(args: Any = None, **kwargs: Any) -> str:
     return _render(result)
 
 
+def _is_early_turn(kwargs: dict[str, Any]) -> bool:
+    """会话前两轮。
+
+    宿主的 ``is_first_turn``（``agent/turn_context.py``）只覆盖第一轮，
+    第二轮要自己数 user 消息——而这两轮恰恰是后面几十轮的参照样本。
+    """
+    if kwargs.get("is_first_turn"):
+        return True
+    users = 0
+    for message in kwargs.get("conversation_history") or []:
+        role = message.get("role") if isinstance(message, dict) else getattr(message, "role", None)
+        if role == "user":
+            users += 1
+            if users >= 2:
+                return False
+    return True
+
+
 def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     """每一轮（turn）开头掷一次骰；命中就给这一轮塞一行提示。
 
     - 子代理会话（有 parent_session_id）不掷，免得子任务也去发表情包；
     - 用户写的「追加设定」每轮现读，写进同一个 context，改完下一轮生效；
+    - 前两轮节拍强制命中（概率为 0 时除外）：锚点不交给骰子；
     - 任何异常都吞掉：掷骰失败不能把正常轮次搞挂。
     """
     try:
@@ -111,16 +131,25 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
         if custom:
             parts.append(f"{chance.CUSTOM_HEADER}\n\n{custom}")
         platform = str(kwargs.get("platform") or "")
+        early = _is_early_turn(kwargs)
         # 两条骰子互相独立：表情包管「发不发图」，节拍管「嘴还在不在」。
         sticker_hit = chance.should_fire(config, platform=platform)
-        beat_hit = chance.should_fire_beat(config, platform=platform)
+        beat_hit = chance.should_fire_beat(config, platform=platform, early=early)
         if sticker_hit:
             parts.append(chance.HIT_CONTEXT)
         if beat_hit:
-            parts.append(chance.BEAT_CONTEXT)
+            # 命中时换一种说法：同一条指令原样重复会被历史自举磨成背景噪音，
+            # 新鲜度比频率有用（见 chance.py 里 BEAT_CONTEXTS 的注释）。
+            parts.append(chance.BEAT_EARLY_CONTEXT if early else chance.pick_beat())
         # 命中记录：注入的这行不进 state.db 的 user message，事后无法从库里
         # 区分「命中轮」和「未命中轮」，也就没法判断节拍骰到底有没有用。
-        _log_roll(platform=platform, beat=beat_hit, sticker=sticker_hit)
+        _log_roll(
+            session_id=str(kwargs.get("session_id") or ""),
+            platform=platform,
+            beat=beat_hit,
+            sticker=sticker_hit,
+            early=early,
+        )
         if parts:
             return {"context": "\n\n".join(parts)}
     except Exception as exc:  # noqa: BLE001
@@ -128,23 +157,35 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
     return None
 
 
-#: 命中日志：一行一次掷骰，测量脚本按时间戳跟 state.db 的回合对齐做 A/B。
+#: 命中日志：一行一次掷骰，测量脚本按 session_id + 时间戳跟 state.db 的回合对齐做 A/B。
 ROLL_LOG = "roll-log.jsonl"
 _ROLL_LOG_MAX_BYTES = 512 * 1024
 
 
-def _log_roll(*, platform: str, beat: bool, sticker: bool) -> None:
-    """追加一行命中记录。写失败只记 debug，绝不影响这一轮。"""
+def _log_roll(*, session_id: str, platform: str, beat: bool, sticker: bool, early: bool) -> None:
+    """追加一行命中记录。写失败只记 debug，绝不影响这一轮。
+
+    带 ``session_id`` 是为了让测量脚本精确归属：老版本只按时间戳找「最近的前一个
+    回合」，跨会话会错配（实测 5 条日志只归属上 4 个回合，还查不出丢的是哪条）。
+    超过上限是**轮转**不是删除——直接删会把测量窗口静默清零。
+    """
     try:
         path = chance.config_path().with_name(ROLL_LOG)
         if path.is_file() and path.stat().st_size > _ROLL_LOG_MAX_BYTES:
-            path.unlink()  # 半兆够几千轮，真撞上了从头再来，测量窗口自己重开
+            path.replace(path.with_name(ROLL_LOG + ".1"))
         import json
         import time
 
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(
-                {"ts": time.time(), "platform": platform, "beat": beat, "sticker": sticker},
+                {
+                    "ts": time.time(),
+                    "session_id": session_id,
+                    "platform": platform,
+                    "beat": beat,
+                    "sticker": sticker,
+                    "early": early,
+                },
                 ensure_ascii=False,
             ) + "\n")
     except Exception as exc:  # noqa: BLE001
@@ -182,14 +223,17 @@ def _cmd_whalechan(raw_args: str = "") -> str:
         custom = config.get("custom") or ""
         state = "开" if config.get("enabled", True) else "关"
         tail = f"「{custom[:24]}…」" if len(custom) > 24 else (f"「{custom}」" if custom else "空")
+        sources_line = chance.describe_sources(config)
         return (
             f"表情包掷骰：{state} · 概率 {config.get('probability')}%\n"
-            f"人设节拍：{config.get('beat_probability')}%（0 关；跟表情包互相独立）\n"
-            f"追加设定：{len(custom)}/{chance.DEFAULT_CUSTOM_MAX} 字，{tail}\n"
+            f"人设节拍：{config.get('beat_probability')}%（0 关；前两轮强制命中；跟表情包互相独立）\n"
+            + (f"{sources_line}\n" if sources_line else "")
+            + f"追加设定：{len(custom)}/{chance.DEFAULT_CUSTOM_MAX} 字，{tail}\n"
             f"{_persona_line()}\n"
             f"{_USAGE}"
         )
     lowered = args.lower()
+    head = lowered.split(None, 1)[0] if lowered else ""
     if lowered in {"sync", "sync force", "重装"}:
         return persona.bootstrap(force=True)["message"]
     if lowered in {"off", "关"}:
@@ -204,7 +248,7 @@ def _cmd_whalechan(raw_args: str = "") -> str:
     if lowered == "custom":
         custom = config.get("custom") or ""
         return "追加设定：空。" + _USAGE if not custom else f"追加设定（{len(custom)} 字）：\n{custom}"
-    if lowered.startswith("custom"):
+    if head == "custom":
         text = args[len("custom"):].strip()
         if not text:
             return _USAGE

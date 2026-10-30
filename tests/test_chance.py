@@ -137,5 +137,47 @@ class BeatTest(unittest.TestCase):
             self.assertEqual(config["beat_probability"], 0.0)
 
 
+class BeatVariantTest(unittest.TestCase):
+    """节拍措辞：几套说法换着来 + 前两轮强制命中。"""
+
+    def test_variants_are_distinct_and_constrained(self):
+        contexts = chance.BEAT_CONTEXTS
+        self.assertGreaterEqual(len(contexts), 3)
+        self.assertEqual(len(set(contexts)), len(contexts))
+        for text in contexts:
+            self.assertTrue("口癖" in text or "语气词" in text, text)
+            self.assertTrue("内心" in text or "动作" in text, text)
+            self.assertTrue(text.startswith("🎭 人设节拍"), text)
+        # 兼容别名指向第一条，老调用方不会炸
+        self.assertIs(chance.BEAT_CONTEXT, contexts[0])
+
+    def test_pick_beat_only_returns_known_variants(self):
+        rng = random.Random(7)
+        picked = {chance.pick_beat(rng) for _ in range(300)}
+        self.assertEqual(picked, set(chance.BEAT_CONTEXTS))
+
+    def test_early_context_is_its_own_thing(self):
+        self.assertNotIn(chance.BEAT_EARLY_CONTEXT, chance.BEAT_CONTEXTS)
+        self.assertIn("口癖", chance.BEAT_EARLY_CONTEXT)
+        self.assertIn("内心", chance.BEAT_EARLY_CONTEXT)
+
+    def test_early_forces_hit_even_when_dice_miss(self):
+        config = {"beat_probability": 55.0, "sources": []}
+        rng = random.Random(1)
+        self.assertTrue(all(chance.should_fire_beat(config, rng=rng, early=True) for _ in range(200)))
+
+    def test_early_does_not_override_zero_or_sources(self):
+        # 用户明确关掉（0）就得尊重，前两轮也不硬塞
+        self.assertFalse(chance.should_fire_beat({"beat_probability": 0.0, "sources": []}, early=True))
+        blocked = {"beat_probability": 55.0, "sources": ["telegram"]}
+        self.assertFalse(chance.should_fire_beat(blocked, platform="desktop", early=True))
+        self.assertTrue(chance.should_fire_beat(blocked, platform="telegram", early=True))
+
+    def test_describe_sources(self):
+        self.assertEqual(chance.describe_sources({"sources": []}), "")
+        self.assertEqual(chance.describe_sources({"sources": ["desktop", "telegram"]}),
+                         "只在 desktop、telegram 上掷骰")
+
+
 if __name__ == "__main__":
     unittest.main()

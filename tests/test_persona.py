@@ -171,5 +171,32 @@ class StatusTest(Sandbox):
         self.assertEqual(after["source"], "agent")
 
 
+class DisplayAndStructuredTest(Sandbox):
+    def test_force_does_not_steal_display(self):
+        """/whalechan sync 只同步文本，不抢「用哪个人设」的开关。"""
+        self.bootstrap()
+        writer = _fake_writer_factory(self.config)
+        writer(self.config, "display.personality", "kawaii")
+        writer(self.config, "agent.personalities.whalechan", None)
+        result = self.bootstrap(force=True)
+        self.assertIn(result["action"], {"installed", "updated"})
+        config = self.read_config()
+        self.assertEqual(config["display"]["personality"], "kawaii")
+        self.assertEqual(config["agent"]["personalities"]["whalechan"],
+                         persona.compose(self.persona_dir))
+        self.assertIn("没动 display.personality", result["message"])
+
+    def test_structured_persona_is_never_overwritten(self):
+        # 手写的结构化人设（dict）不能被纯文本顶掉，force 也不行
+        self.config.write_text(yaml.safe_dump(
+            {"agent": {"personalities": {"whalechan": {"text": "别人写的结构"}}},
+             "display": {"personality": "whalechan"}}, allow_unicode=True), encoding="utf-8")
+        result = self.bootstrap(force=True)
+        self.assertEqual(result["action"], "failed")
+        self.assertIn("结构化", result["message"])
+        self.assertEqual(self.read_config()["agent"]["personalities"]["whalechan"],
+                         {"text": "别人写的结构"})
+
+
 if __name__ == "__main__":
     unittest.main()
