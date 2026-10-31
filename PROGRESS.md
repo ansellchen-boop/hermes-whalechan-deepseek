@@ -16,6 +16,7 @@
 - [x] 单测 38 个全绿；闸门矩阵 9/9
 - [x] 推上 GitHub `main`（commit `ab1c89b` 及其后），匿名拉取验证过内容
 - [x] 独立复审通过（glm-5.3，逐条复跑验证）
+- [x] 五子系统补齐（2026-10-31）：`pyproject.toml` / `.python-version` / `Makefile`（`make check` 一条命令）/ `PROGRESS.md`（本文件）/ `scripts/probe_gates.py`（闸门矩阵探针，9/9）；AGENTS.md 加技术栈版本表、验证命令表、§8 文档索引
 
 ## 正在进行
 
