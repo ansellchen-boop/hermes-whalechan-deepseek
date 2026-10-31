@@ -1,7 +1,7 @@
 # PROGRESS —— hermes-whalechan-deepseek
 
 > 给「下一个会话的我」看的。每个会话结束前改这里，开始前读这里。
-> 台账细节在 `AGENTS.md` §6；这份只回答三个问题：**做完什么、正在做什么、被什么卡着**。
+> 台账细节在 `docs/state.md`；入口规矩在 `AGENTS.md`（后者是本地文档，不进仓库）。这份只回答三个问题：**做完什么、正在做什么、被什么卡着**。
 > 最后更新：2026-10-31 15:12
 
 ## 已完成
@@ -34,4 +34,4 @@
 
 1. `make check` —— 三秒确认地基没塌
 2. `wc -l ~/.hermes/plugins/whalechan/roll-log.jsonl` —— 看样本攒到哪了
-3. 读本文件「正在进行」+ `AGENTS.md` §6
+3. 读本文件「正在进行」+ `docs/state.md`（样本量与判据口径）
