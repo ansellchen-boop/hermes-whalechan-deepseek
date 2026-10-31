@@ -32,7 +32,7 @@ git log --oneline -1 && git status -sb    # ahead N = 有未推的
 - [x] 头两轮立锚 + 会话前两轮强制命中（`should_fire_beat(early=True)`）
 - [x] `roll-log.jsonl` 命中日志（带 `session_id` / `early`）+ `scripts/measure_persona_drift.py` 测量脚本（分桶曲线 / 配对 / 表情包对照 / 节拍 A/B）
 - [x] 单测 38 个全绿；闸门矩阵 9/9
-- [x] 已推 GitHub `main`：`b7d31a2` → `caae43e`（docs 四篇入库）→ `b31193e`（指令审计脚本），每次都做匿名 `ls-remote` 回读，与本地 HEAD 一致
+- [x] 历史推送记录（**只记推过的，不代表此刻没有未推的**）：`b7d31a2` → `caae43e`（docs 四篇入库）→ `b31193e`（指令审计脚本）。**当前有没有未推的，一律现场跑 `git status -sb`，别看这一行** —— 它天生滞后，而且滞后几条说不准
 - [x] 独立复审（glm-5.3-flash 直连，只读，无执行权限）：裁决「有条件通过」，7 条指控核实 6 条属实；已按意见重拆 commit 并收掉小修
 - [x] 五子系统补齐（2026-10-31）：`pyproject.toml` / `.python-version` / `Makefile`（`make check` 一条命令）/ `PROGRESS.md`（本文件）/ `scripts/probe_gates.py`（闸门矩阵探针，9/9）；AGENTS.md 加技术栈版本表、验证命令表、§8 文档索引
 
@@ -51,5 +51,8 @@ git log --oneline -1 && git status -sb    # ahead N = 有未推的
 ## 下一步 / 开工顺序
 
 1. `make check` —— 三秒确认地基没塌
-2. `wc -l ~/.hermes/plugins/whalechan/roll-log.jsonl` —— 看样本攒到哪了
+2. 看样本攒到哪了 —— **用这条，别用 `wc -l`**（日志里有 `session_id: ""` 的探针行，`wc -l` 会多算）：
+   ```bash
+   grep -c '"session_id": "[^"]' ~/.hermes/plugins/whalechan/roll-log.jsonl
+   ```
 3. 读本文件「正在进行」+ `docs/state.md`（样本量与判据口径）
