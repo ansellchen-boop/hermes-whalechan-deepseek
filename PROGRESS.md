@@ -6,11 +6,16 @@
 
 ## 当前状态
 
-- 最新 commit：`b31193e`（feat(audit): 指令审计脚本），**已推 GitHub**，匿名 `ls-remote` 回读一致
-- `make check`：38 tests OK + 闸门 9/9 + apply-check 绿 → `✓ 全部通过`
-- 人设：3785 字符（仓库 = `~/.hermes/config.yaml` 一致），插件差异无
+**本节不写死 commit hash** —— 写它的那个提交无法把自己写进去，记了必然滞后一个提交，下一个 agent 照着报错。要看当前在哪：
+
+```bash
+git log --oneline -1 && git status -sb    # ahead N = 有未推的
+```
+
+- 上次验证（2026-10-31 15:36）：`make check` → `Ran 38 tests OK` + 闸门 9/9 + `apply.py --check` ✓ → `✓ 全部通过`
+- 人设：**3785 字符 = `~/.hermes/config.yaml` 的合成串**（口径写清，别拿源文件三篇 2573+156+1055=3784 去比，差的 2 是拼接符），插件差异无
 - 指令审计：三份入口全绿，硬约束三件缺 0 条，`docs/` 缺声明 0 篇
-- 工作区：干净（`git status --short` 无输出）
+- 观察期样本：`roll-log.jsonl` 93 行、带 `session_id` 87 行（目标 260）
 
 ## 已完成
 
@@ -38,7 +43,7 @@
 - 无硬阻塞。
 - 待用户决定：① 要不要上方案 C（`agent/context_compressor.py` 的摘要模板加 `## Voice & Style`，需写成幂等 `apply.py` 补丁，`hermes update` 后要重跑）；② 两个测试会话要不要删（`local-8a298a43…`、`local-981e321c…`）。
 
-## 下一个会话开工顺序
+## 下一步 / 开工顺序
 
 1. `make check` —— 三秒确认地基没塌
 2. `wc -l ~/.hermes/plugins/whalechan/roll-log.jsonl` —— 看样本攒到哪了
