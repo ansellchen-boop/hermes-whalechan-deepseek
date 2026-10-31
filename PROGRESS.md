@@ -13,9 +13,14 @@ git log --oneline -1 && git status -sb    # ahead N = 有未推的
 ```
 
 - 上次验证（2026-10-31 15:36）：`make check` → `Ran 38 tests OK` + 闸门 9/9 + `apply.py --check` ✓ → `✓ 全部通过`
-- 人设：**3785 字符 = `~/.hermes/config.yaml` 的合成串**（口径写清，别拿源文件三篇 2573+156+1055=3784 去比，差的 2 是拼接符），插件差异无
+- 人设：**3785 字符 = `~/.hermes/config.yaml` 里 `agent.personalities.whalechan` 合成串的 `len()`**。源文件 `prefix.md` 2572 + `suffix.md` 1055 + `user.md` 156 = **3783**，差的 2 是两个拼接符。拿 3783 去比 3785 会误判成不一致
 - 指令审计：三份入口全绿，硬约束三件缺 0 条，`docs/` 缺声明 0 篇
-- 观察期样本：`roll-log.jsonl` 93 行、带 `session_id` 87 行（目标 260）
+- 观察期样本：**写成命令，别写死行数**（这行以前写死「93 行 / 87 行」，半天就漂了）：
+  ```bash
+  wc -l < ~/.hermes/plugins/whalechan/roll-log.jsonl
+  grep -c '"session_id": "[^"]' ~/.hermes/plugins/whalechan/roll-log.jsonl
+  ```
+  计数口径是这个 grep：**带非空 `session_id` 的行**（日志里有 `session_id: ""` 的探针行，直接 `wc -l` 会多算）
 
 ## 已完成
 
@@ -34,7 +39,7 @@ git log --oneline -1 && git status -sb    # ahead N = 有未推的
 ## 正在进行
 
 - [ ] **观察期攒样本**：判据是 `~/.hermes/plugins/whalechan/roll-log.jsonl` 里出现带 `session_id` 的新行（= 桌面和网关都跑新模块了）
-- [ ] 目标样本量：约 260 个带日志的回合（55% 命中率下，α=0.05 / power=0.8 分清 20pp 所需）
+- [ ] 目标样本量：约 **262** 个带非空 `session_id` 的回合（推导在 `docs/state.md:27`：55% 命中率、α=0.05、power=0.8 分清 20pp。以前这里写 260 是取整，以 262 为准）
 - [ ] 到量后跑 `make drift`，看「节拍命中轮 vs 未命中轮」的口癖率差
 
 ## 被阻塞 / 等拍板
