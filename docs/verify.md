@@ -3,7 +3,7 @@
 > 适用：改完任何文件、准备说「好了」之前；或怀疑某条链路没生效时。
 > 不适用：查怎么装 → `README.md`；查某个坑为什么踩 → `pitfalls.md`。
 > 过期条件：`Makefile` 的 target 改名/增删，或 Hermes venv 路径变了。
-> 来源：原 `AGENTS.md` §4，2026-10-31 拆分；已与 `Makefile`（`check: syntax test apply-check probe`）逐条对齐——原文档漏写了 `probe`，这里按实现写。
+> 来源：原 `AGENTS.md` §4，2026-10-31 拆分；已与 `Makefile`（`check: syntax test apply-check probe`，另有体检用 `audit`）逐条对齐——原文档漏写了 `probe`，这里按实现写。
 
 ## 一条命令
 
@@ -26,9 +26,12 @@ make check          # = syntax + test(38) + apply-check + probe
 | `make probe` | 闸门矩阵 9 个用例：直接调 `_on_pre_llm_call`，断言**注入文本**，临时 `HERMES_HOME` 不碰真配置 | 改了钩子或掷骰逻辑 |
 | `make drift` | 人设漂移曲线 + 节拍 A/B（读 `state.db` 和 `roll-log.jsonl`） | 攒够样本后 |
 | `make lint` / `make typecheck` | ruff / mypy | 本机都没装，会打印「跳过」而不是报红 |
+| `make audit` | 三份 `AGENTS.md` 的行数/字符/硬约束三件齐不齐、`docs/*.md` 时效声明、入口死链、多久没复审；写 `~/.hermes/cache/audit/history.jsonl` 记趋势 | 每周（已有 cron `6e4bbfb9ae63`）或加了新指令后 |
 | `make help` | 上面这些的一句话说明 | 忘了 target 名 |
 
 `make lint` 没装 ruff 时**跳过而不是失败**是故意的：验证命令必须真能跑，宁可跳过并说清楚，也不留一条永远红的命令。
+
+`make audit` 刻意**不在** `check` 里：它慢、会写历史文件，属于「体检」不属于「构建」。退出码 0 全绿 / 1 有硬失败 / 2 只有警告。想验它没坏，用 `--targets` 指向一个故意缺声明的临时目录，看是否返回 1。
 
 ## 用错 Python 会假装插件坏了
 

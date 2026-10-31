@@ -7,13 +7,14 @@
 PY       ?= python3
 VENV_PY  := $(HOME)/.hermes/hermes-agent/venv/bin/python
 
-.PHONY: help check test syntax apply-check drift probe lint typecheck
+.PHONY: help check test syntax apply-check audit drift probe lint typecheck
 
 help:
 	@echo "make check       全套验证 = syntax + test + apply-check + probe（默认该跑的）"
 	@echo "make test        单元测试（纯逻辑，不走网络）"
 	@echo "make syntax      语法编译检查（compileall）"
 	@echo "make apply-check 仓库 vs 已安装的人设/插件是否一致（只读）"
+	@echo "make audit       指令审计：三处 AGENTS.md 的尺寸/三件/死链/陈旧度（不阻塞 check）"
 	@echo "make drift       人设漂移曲线 + 节拍骰 A/B（读 state.db 和 roll-log）"
 	@echo "make probe       闸门矩阵探针（9 个用例，临时 HERMES_HOME，不碰真配置）"
 	@echo "make lint        ruff（未装则跳过并提示）"
@@ -31,6 +32,10 @@ test:
 apply-check:
 	@test -x $(VENV_PY) || { echo "找不到 Hermes venv: $(VENV_PY)"; exit 1; }
 	@$(VENV_PY) apply.py --check
+
+audit:
+	@test -x $(VENV_PY) || { echo "找不到 Hermes venv: $(VENV_PY)"; exit 1; }
+	@$(VENV_PY) scripts/audit_instructions.py
 
 drift:
 	@test -x $(VENV_PY) || { echo "找不到 Hermes venv: $(VENV_PY)"; exit 1; }
