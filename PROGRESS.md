@@ -12,7 +12,7 @@
 git log --oneline -1 && git status -sb    # ahead N = 有未推的
 ```
 
-- 上次验证（2026-10-31 15:36）：`make check` → `Ran 38 tests OK` + 闸门 9/9 + `apply.py --check` ✓ → `✓ 全部通过`
+- 上次验证（2026-10-31 16:57）：`make check` → `Ran 38 tests OK` + 闸门 9/9 + `apply.py --check` ✓ + 临时工件扫清 → `✓ 全部通过`
 - 人设：**3785 字符 = `~/.hermes/config.yaml` 里 `agent.personalities.whalechan` 合成串的 `len()`**。源文件 `prefix.md` 2572 + `suffix.md` 1055 + `user.md` 156 = **3783**，差的 2 是两个拼接符。拿 3783 去比 3785 会误判成不一致
 - 指令审计：三份入口全绿，硬约束三件缺 0 条，`docs/` 缺声明 0 篇
 - 观察期样本：**写成命令，别写死行数**（这行以前写死「93 行 / 87 行」，半天就漂了）：
@@ -34,6 +34,7 @@ git log --oneline -1 && git status -sb    # ahead N = 有未推的
 - [x] 单测 38 个全绿；闸门矩阵 9/9
 - [x] 历史推送记录（**只记推过的，不代表此刻没有未推的**）：`b7d31a2` → `caae43e`（docs 四篇入库）→ `b31193e`（指令审计脚本）。**当前有没有未推的，一律现场跑 `git status -sb`，别看这一行** —— 它天生滞后，而且滞后几条说不准
 - [x] 独立复审（glm-5.3-flash 直连，只读，无执行权限）：裁决「有条件通过」，7 条指控核实 6 条属实；已按意见重拆 commit 并收掉小修
+- [x] 会话退出第四条件接进 `make check`（2026-10-31）：`scripts/check-session-exit.sh`（通用版，`--repo` 指定仓）+ `make exit-check`，并进 `check` 依赖；顺带把根 `AGENTS.md` 的「绿」判据补上这一行。qq-bridge 那侧早已自挂（`check.sh` 第 73 段），别重装
 - [x] 五子系统补齐（2026-10-31）：`pyproject.toml` / `.python-version` / `Makefile`（`make check` 一条命令）/ `PROGRESS.md`（本文件）/ `scripts/probe_gates.py`（闸门矩阵探针，9/9）；AGENTS.md 加技术栈版本表、验证命令表、§8 文档索引
 
 ## 正在进行
