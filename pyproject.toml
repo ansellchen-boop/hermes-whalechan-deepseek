@@ -36,6 +36,6 @@ ignore = ["E501"]
 python_version = "3.10"
 ignore_missing_imports = true
 warn_unused_ignores = true
-# 只查不依赖 Hermes 内部 API 的两个模块（chance / persona 的纯逻辑部分）。
-# __init__.py 里全是 ctx.* 这类没有类型桩的宿主 API，查了也是满屏 Any。
+# 只查 chance.py：纯逻辑、不依赖 Hermes 宿主 API。
+# persona.py / __init__.py 里全是 ctx.* 这类没有类型桩的宿主 API，查了也是满屏 Any。
 files = ["plugins/whalechan/chance.py"]
