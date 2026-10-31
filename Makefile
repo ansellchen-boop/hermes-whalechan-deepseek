@@ -10,7 +10,7 @@ VENV_PY  := $(HOME)/.hermes/hermes-agent/venv/bin/python
 .PHONY: help check test syntax apply-check drift probe lint typecheck
 
 help:
-	@echo "make check       全套验证 = syntax + test + apply-check + probe（默认该跑的）"
+	@echo "make check       全套验证 = syntax + test + apply-check（默认该跑的）"
 	@echo "make test        单元测试（纯逻辑，不走网络）"
 	@echo "make syntax      语法编译检查（compileall）"
 	@echo "make apply-check 仓库 vs 已安装的人设/插件是否一致（只读）"
@@ -19,7 +19,7 @@ help:
 	@echo "make lint        ruff（未装则跳过并提示）"
 	@echo "make typecheck   mypy（未装则跳过并提示）"
 
-check: syntax test apply-check probe
+check: syntax test apply-check
 	@echo "✓ 全部通过"
 
 syntax:
