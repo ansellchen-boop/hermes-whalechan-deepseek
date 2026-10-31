@@ -1,0 +1,41 @@
+# hermes-whalechan-deepseek —— Hermes 插件，不是 pip 包，不进任何依赖树
+#
+# 这份文件存在的唯一意义：把「用什么 Python、依赖什么、用什么工具查」钉死，
+# 别让下一台机器靠记忆去猜。装它不靠 pip，靠
+#   hermes plugins install ansellchen-boop/hermes-whalechan-deepseek/plugins/whalechan
+# 或本仓库的 python3 apply.py。
+
+[project]
+name = "hermes-whalechan-deepseek"
+version = "0.4.0"
+description = "鲸鱼娘（Whale-chan / DeepSeek娘）Hermes 预设：人设三段 + sticker 工具 + 每轮宿主骰子（表情包 / 人设节拍）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Weidows (original) / Hermes port" }]
+
+# 运行时零第三方依赖：
+# 插件跑在 Hermes 自己的 venv 里，PyYAML / ruamel 由 Hermes 提供。
+# 这里有依赖 = 装插件的人要多装一样东西 = 自举会悄悄失败，所以保持空。
+dependencies = []
+
+[project.optional-dependencies]
+# 只给开发用。本机当前没装这两个，`make lint` / `make typecheck` 会明确跳过而不是假装通过。
+dev = ["ruff>=0.6", "mypy>=1.11"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# 长行多半是人设文本、报错原文和正则，不拆
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+# 只查 chance.py：纯逻辑、不依赖 Hermes 宿主 API。
+# persona.py / __init__.py 里全是 ctx.* 这类没有类型桩的宿主 API，查了也是满屏 Any。
+files = ["plugins/whalechan/chance.py"]

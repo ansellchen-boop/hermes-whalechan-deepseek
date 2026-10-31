@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -21,6 +22,14 @@ STICKER_TYPES = ("meme", "illustration", "setting", "comic", "standing", "other"
 TTL_SECONDS = 7 * 24 * 3600
 MIN_BODY = 1024
 FETCH_TIMEOUT = 20
+
+# 本机图片库。桌面端能直读这里（在 /api/media 的 serve roots 里），
+# 发 MEDIA:<路径> 不经过任何外网取图 —— 外链在客户端被墙时也不会瞎。
+# 目录名带 whalechan，跟用户上传的 upload_*.png 分开，互不干扰。
+LOCAL_DIR_NAME = "whalechan"
+LOCAL_MAX_FILES = 200                      # 超过就按最久没看的删
+LOCAL_MAX_BYTES = 50 * 1024 * 1024         # 50 MB 总量上限
+LOCAL_MAX_ONE = 8 * 1024 * 1024            # 单张太大就不落地，退回外链
 
 # 场景词 → 图库里实际存在的标签。只做最常见的几种，多了就是猜。
 SYNONYMS = {
@@ -208,6 +217,94 @@ def _present(work: dict) -> dict:
         "markdown": f"![{safe}]({work['preview']})",
         "description": work["description"][:160],
     }
+
+
+def local_dir() -> Path:
+    """本机图片目录：``<hermes home>/images/whalechan``。"""
+    home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+    return Path(home) / "images" / LOCAL_DIR_NAME
+
+
+def _local_name(preview: str) -> str:
+    """用网址里的文件名当本地名 —— 同一张图永远是同一个文件，天然去重。"""
+    raw = preview.rsplit("/", 1)[-1].split("?", 1)[0]
+    stem = re.sub(r"[^\w.\-]", "_", raw) or "sticker"
+    if not Path(stem).suffix:
+        stem += ".webp"
+    return stem
+
+
+def prune_local(keep: Path | None = None) -> int:
+    """按张数和总字节两个上限清最久没看的图；``keep`` 那张永不删。返回删了几张。"""
+    try:
+        folder = local_dir()
+        files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() != ".tmp"]
+    except OSError:
+        return 0
+
+    def mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def size(p: Path) -> int:
+        try:
+            return p.stat().st_size
+        except OSError:
+            return 0
+
+    files.sort(key=mtime)  # 最旧的排前面
+    total = sum(size(p) for p in files)
+    removed = 0
+    while files and (len(files) > LOCAL_MAX_FILES or total > LOCAL_MAX_BYTES):
+        oldest = files.pop(0)
+        if keep is not None and oldest == keep:
+            continue
+        total -= size(oldest)
+        try:
+            oldest.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def materialize(work: dict, force: bool = False) -> str | None:
+    """把预览图落到本机，返回绝对路径。失败一律返回 None（调用方退回外链）。
+
+    同名文件已在就直接复用；下载走临时文件再改名，半截不会留下坏图。
+    """
+    preview = work.get("preview")
+    if not isinstance(preview, str) or not preview.startswith(("http://", "https://")):
+        return None
+    try:
+        folder = local_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / _local_name(preview)
+        if dest.is_file() and dest.stat().st_size > 0 and not force:
+            os.utime(dest, None)  # 用过就刷新时间，清理时不会先删它
+            return str(dest)
+
+        req = urllib.request.Request(
+            preview,
+            headers={"accept-encoding": "identity", "user-agent": "hermes-whalechan-herself"},
+        )
+        tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
+        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT) as res:
+            body = res.read(LOCAL_MAX_ONE + 1)
+        if len(body) < MIN_BODY or len(body) > LOCAL_MAX_ONE:
+            return None  # 太小是错误页，太大不占地方
+        tmp.write_bytes(body)
+        tmp.replace(dest)
+        prune_local(keep=dest)
+        return str(dest)
+    except Exception:  # noqa: BLE001 - 落不了地不算错，退回外链
+        try:
+            tmp.unlink(missing_ok=True)
+        except (OSError, UnboundLocalError):
+            pass
+        return None
 
 
 def search_stickers(index: dict, options: dict | None = None) -> dict:

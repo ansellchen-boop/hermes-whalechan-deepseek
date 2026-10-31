@@ -20,16 +20,16 @@ import logging
 from typing import Any
 
 from . import chance, persona
-from .stickers import STICKER_TYPES, load_archive, search_stickers
+from .stickers import STICKER_TYPES, load_archive, materialize, search_stickers
 
 log = logging.getLogger("whalechan")
 
 TOOLSET = "whalechan"
 
 DESCRIPTION = (
-    "按场景/心情从社区图库找一张 DeepSeek娘/鲸鱼娘表情包，返回可直接粘贴的 Markdown 图片行"
-    "（`![名字](链接)`）、标签和简短描述。这一轮该发表情包时调用；或者图真的贴切时调用。"
-    "永远不要自己编图片 URL，也不要用文字描述图片来代替发图。"
+    "按场景/心情从社区图库找一张 DeepSeek娘/鲸鱼娘表情包。每张图会给一条 `MEDIA:/绝对路径`："
+    "**原样单独占一行发出去，不要再包成 `![名字](路径)`** —— 包了方括号里的字会漏成散字显示在图片角落。"
+    "这一轮该发表情包时调用；或者图真的贴切时调用。永远不要自己编图片 URL，也不要用文字描述图片来代替发图。"
 )
 
 SCHEMA = {
@@ -66,9 +66,20 @@ def _render(result: dict) -> str:
         else f"没有贴合的匹配，随机给了 {len(stickers)} 张："
     )
     lines = [head]
-    for i, sticker in enumerate(stickers, 1):
+    sent = 0
+    for sticker in stickers:
         tags = f" [{','.join(map(str, sticker['tags']))}]" if sticker.get("tags") else ""
-        lines.append(f"{i}. {sticker['name']}{tags}\n{sticker['markdown']}")
+        # 只给裸 MEDIA: 行，落不了地就跳过这张。
+        # 绝不退回 sticker["markdown"]（`![名字](外链)`）—— 模型会原样抄进回复，
+        # 方括号里的字就漏成图注散字。2026-10-31 连犯三次，用户两次报障，
+        # 根源就是这条兜底 + 人设/工具描述当时都写着「返回 Markdown 图片行」。
+        body = sticker.get("media")
+        if not body:
+            continue
+        sent += 1
+        lines.append(f"{sent}. {sticker['name']}{tags}\n{body}")
+    if not sent:
+        return "图没落到本地，这一轮先别发（不要用外链兜底）。"
     return "\n".join(lines)
 
 
@@ -93,6 +104,13 @@ def _handler(args: Any = None, **kwargs: Any) -> str:
     except Exception as exc:  # noqa: BLE001
         log.warning("sticker: 检索失败: %s", exc)
         return f"表情包检索失败：{exc}"
+
+    # 落地到本机再给：客户端直连外链可能被墙，本机路径不经过网络。
+    # 单张失败只退回外链，不影响其它候选。
+    for sticker in result.get("stickers") or []:
+        local = materialize(sticker)
+        if local:
+            sticker["media"] = f"MEDIA:{local}"
     return _render(result)
 
 
