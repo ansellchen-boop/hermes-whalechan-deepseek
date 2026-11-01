@@ -45,6 +45,7 @@ config 里**不再有任何** `personalities.whalechan` / `display.personality`�
   - 🎲 表情包（默认 66.6%）—— 管**发不发图**
   - 🎭 人设节拍（默认 55%）—— 管**嘴在不在**（口癖 + 内心戏/小动作）
   - 🧭 节奏（默认 85%，会话前两轮必中）—— 管**结构在不在**（报 `[进度]` + 收尾三段小结）
+- **`transform_llm_output` 钩子** —— 模型把 `MEDIA:<路径>` 和下一句话写在同一行时补空行。宿主认 MEDIA 要求扩展名后紧跟空白或标点，紧跟汉字就整条不匹配（`gateway/platforms/base.py` 的 `MEDIA_TAG_CLEANUP_RE`），人设里写两遍「前后各空一行」也治不了，只能在输出侧兜
 - **`/whalechan` 命令** —— 查/改概率、`sync` 重写 SOUL、`custom` 运行时追加设定
 - **自举** —— 首次加载时若 `SOUL.md` 还是出厂英文身份，自动写入并清掉 config 旧键
 - **`roll-log.jsonl`** —— 每次掷骰一行，含 `beat` / `sticker` / `rhythm` / `early`，给 `scripts/measure_persona_drift.py` 用

@@ -182,7 +182,7 @@ hermes-whalechan/
 ├── plugins/whalechan/          ← 插件本体，GitHub 装的就是这个子目录
 │   ├── __init__.py             sticker 工具 + pre_llm_call 掷骰 + /whalechan
 │   ├── chance.py               掷骰纯逻辑（不依赖 Hermes，可单测）
-│   ├── persona.py              人设合成 + 自举写入 config（纯逻辑，可单测）
+│   ├── persona.py              人设合成 + 自举写进 SOUL.md（纯逻辑，可单测）
 │   ├── persona/                人设三段（见上表；跟着插件走，装子目录才带得上）
 │   │   ├── prefix.md
 │   │   ├── user.md

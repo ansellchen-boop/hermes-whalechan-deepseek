@@ -7,9 +7,15 @@
 
 ## 机制层：已实测通过
 
-闸门矩阵 **9/9** 通过（`make probe`；用例：节拍 100/0、表情包 100/0、两者组合、`enabled=false` 下节拍仍活、`sources` 过滤、子代理豁免、custom 注入、roll-log 落盘）。节奏骰没有独立的探针用例，靠 `roll-log` 的 `rhythm` 字段 + `tests/test_chance.py` 的 `RhythmTest` / `RhythmVariantTest`（11 个）覆盖。
+闸门矩阵 **9/9** 通过（`make probe`；用例：节拍 100/0、表情包 100/0、两者组合、`enabled=false` 下节拍仍活、`sources` 过滤、子代理豁免、custom 注入、roll-log 落盘）。节奏骰没有独立的探针用例，靠 `roll-log` 的 `rhythm` 字段 + `tests/test_chance.py` 的 `RhythmTest` / `RhythmVariantTest`（11 个）覆盖。输出侧 MEDIA 钩子由 `tests/test_media_hook.py` 的 19 个用例覆盖（`SplitGluedMediaTest` 14 / `TransformHookTest` 4 / `RegisterTest` 1）。
 
-2026-11-01 第三轮改动已落地，单测 **50 个全绿**（39 → 50，新增 11 个节奏用例）：
+2026-11-01 第四轮改动已落地，单测 **69 个全绿**（50 → 69）：
+
+- 新增 `transform_llm_output` 钩子（`_GLUED_MEDIA_RE` / `_split_glued_media()` / `_on_transform_llm_output()`），修模型把 `MEDIA:` 路径和下一句话写在同一行的老毛病；
+- 端到端验证过：让模型「原样输出」一行粘连文本，会话库 `messages.content` 里存成 `…webp\n\n进度小结`；
+- `plugin.yaml` 升到 `0.5.1`，`provides_hooks: [pre_llm_call, transform_llm_output]`。
+
+2026-11-01 第三轮改动，除测试数外仍然成立，单测 50 个（39 → 50，新增 11 个节奏用例）：
 
 - 人设载体从 `agent.personalities.whalechan` 换成 `~/.hermes/SOUL.md`；
 - 新增节奏骰（`chance.RHYTHM_CONTEXTS` / `pick_rhythm()` / `should_fire_rhythm()`），默认 85%；
@@ -28,7 +34,7 @@
 
 ## 行为层：还没攒够样本
 
-新代码 13:33 才上桌。判据仍是 `roll-log.jsonl` 里出现带 `session_id` 的新行 → 说明桌面/网关都跑新模块了。
+网关侧已确认跑新模块：重启后 `roll-log.jsonl` 的新行都带 `"rhythm": true`，探针文本里能看到 `🧭 本轮节奏`。**桌面侧还是旧代码**，要重启 `hermes-dashboard` 才算全量上桌。
 
 **下一步**：攒到约 **262** 个带日志的回合再跑 `scripts/measure_persona_drift.py`（`make drift`）。
 
@@ -53,7 +59,7 @@
 
 ## 这些数字从哪来
 
-2026-10-31 补齐五子系统（`pyproject.toml` / `.python-version` / `Makefile` / `PROGRESS.md` / `scripts/probe_gates.py`）后，**`make check` 是唯一验收入口**：上面说的 50 个单测、9/9 闸门都在它里面，别再引用某次手跑的零散输出。
+2026-10-31 补齐五子系统（`pyproject.toml` / `.python-version` / `Makefile` / `PROGRESS.md` / `scripts/probe_gates.py`）后，**`make check` 是唯一验收入口**：上面说的 69 个单测、9/9 闸门都在它里面，别再引用某次手跑的零散输出。
 
 改动如果动了 `chance.py` 的常量，`make test` 会第一时间红——那些数字是锚，不是估计。
 

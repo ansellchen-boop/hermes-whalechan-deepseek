@@ -69,11 +69,27 @@ systemd-run --user --on-active=60 --unit=<名字> --collect /bin/bash <脚本>
 `plugins/whalechan/config.json`（概率、custom）已 gitignore；模板是 `config.example.json`。
 新增本机私有文件时一律进 `.git/info/exclude`，**别改 `.gitignore`**（那会进仓库）。
 
-## 11. 改完人设别急着说「生效了」
+## 11. 改完人设别急着说「生效了」，也别急着重启
 
-personality 是会话启动时读的：网关下一条消息就带，桌面 / TUI 要**新会话**，或用 `/personality whalechan` 重选。
+SOUL.md 走 identity slot，**每次 API 调用重新读**：`apply.py` 跑完，网关下一条消息就带，桌面会话也不用新会话——判据是日志里那行 `whalechan: 人设 already（N 字）` 的 N 变了。
+
+真正需要重启的只有**插件代码**（`chance.py` / `persona.py` / `__init__.py`）的改动，见 §2。两者分开，别一改人设就重启。
 
 ## 12. 追加设定有两个入口，别两边都写
 
-长期设定进 `persona/user.md`（进 personality，会话级）；临时试验用 `/whalechan custom`（每轮 `pre_llm_call` 注入到 user message）。
-两边写同一句等于注入两遍，白烧 token 还让人设显得啰嗦；`chance.load_config()` 拿到空 `custom` 时 `__init__.py:131` 的 `if custom:` 会整段跳过。
+长期设定进 `persona/user.md`（进 SOUL.md，跟着身份走）；临时试验用 `/whalechan custom`（每轮 `pre_llm_call` 注入到 user message）。
+两边写同一句等于注入两遍，白烧 token 还让人设显得啰嗦；`chance.load_config()` 拿到空 `custom` 时 `__init__.py` 里的 `if custom:` 会整段跳过。
+
+## 13. MEDIA 行粘连：人设写多少遍都没用，只能改输出
+
+**症状**：回复里出现 `MEDIA:/home/…/xxx.webp进度小结`，图不显示、路径当文字留着；有时是 `…webp（内心：…）想让我…`。
+
+**为什么人设治不了**：`gateway/platforms/base.py:1225` 的 `MEDIA_TAG_CLEANUP_RE` 要求扩展名后面紧跟空白、ASCII 标点、CJK 全角标点（`_MEDIA_CJK_TERMINATORS`，第 1218 行）或行尾。紧跟一个汉字（「进」）就整条不匹配，标签不被认成附件。模型抄这一行时不留换行是稳定的坏习惯，2026-11-01 在 `prefix.md` 和 `suffix.md` 各写了一遍「必须独占一行、前后各空一行」，补完 `apply.py` 再跑两次 `hermes chat -q`，**两次都还粘**。
+
+**怎么办**：`__init__.py` 里 `transform_llm_output` 钩子兜底（`_GLUED_MEDIA_RE` + `_split_glued_media`），把 `head+path` 后面补 `\n\n`。它跑在 assistant 行落库之前，改完的文本存库、下一轮重放也是改过的（`agent/turn_finalizer.py:508-546` 的 `apply_llm_output_transform`）。
+
+**两个坑**：
+- 钩子名写错是静默失效，`register_hook("transform_llm_output", …)` 拼错没人报错。`tests/test_media_hook.py` 的 `RegisterTest` 用一个假 ctx 抓注册名，就是为了这个。
+- 终止符要收 ASCII `.`，否则 `MEDIA:/x.webp. See above` 这种英文收尾会被拆成两段。收进来的代价是 `…webp.算了` 不修，但比打断英文句子划算。
+
+**验证判据**：让模型「原样输出」一个粘连的 MEDIA 行，然后查会话库 `messages.content`，看是不是 `…webp\n\n进度小结`。只看 CLI 回显不算——TUI 的 markdown 渲染会把单换行合并，看起来永远像粘着。

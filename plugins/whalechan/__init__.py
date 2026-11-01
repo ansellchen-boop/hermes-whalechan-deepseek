@@ -22,6 +22,7 @@ Hermes 的插件接口上：
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from . import chance, persona
@@ -224,6 +225,52 @@ def _log_roll(*, session_id: str, platform: str, beat: bool, sticker: bool,
         log.debug("whalechan: 命中日志写不了（不影响掷骰）: %s", exc)
 
 
+#: 媒体扩展名。宿主侧的白名单在 ``gateway/platforms/base.py`` 的 ``MEDIA_DELIVERY_EXTS``，
+#: 这里只列常用的：目的不是「识别所有可发文件」，是「认出模型刚刚抄过来的那一行图片」。
+_MEDIA_EXTS = (
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg",
+    "mp4", "mov", "webm", "mkv", "mp3", "wav", "ogg", "m4a", "flac",
+    "pdf", "md", "csv", "json", "txt", "log", "zip",
+    "py", "yaml", "yml", "toml", "html", "htm", "pptx", "docx", "xlsx",
+)
+_EXT_ALT = "|".join(sorted(_MEDIA_EXTS, key=len, reverse=True))
+
+#: 路径允许出现的终止符，和 ``base.py`` 的 ``MEDIA_TAG_CLEANUP_RE`` 对齐（含 CJK 全角标点）。
+#: 多收了 ASCII 的 ``.``：``a.webp. See above`` 这种英文收尾不该被拆成两段。
+_TERMINATORS = "\\s`\"'*,.;_:)\\]}\\[（）、：，。；！？、“”‘’【】"
+
+#: 模型把「MEDIA:路径」和下一句话写在同一行时，宿主认不出这是附件：
+#: ``base.py`` 要求扩展名后面紧跟空白或标点，紧跟一个汉字就整条不匹配 —— 图发不出去，
+#: 路径还当普通文字留在回复里。人设里写了两遍「前后各空一行」也没用（2026-11-01 实测
+#: 三次全粘），所以在输出侧兜一次：粘上了就补换行，本来没粘的一个字不动。
+_GLUED_MEDIA_RE = re.compile(
+    r"(?P<head>MEDIA:\s*)"
+    r"(?P<path>(?:~/|/|[A-Za-z]:[/\\])[^\s`\"'*]+?\.(?:" + _EXT_ALT + r"))"
+    r"(?=[^" + _TERMINATORS + r"])",
+    re.IGNORECASE,
+)
+
+
+def _split_glued_media(text: str) -> str:
+    """把粘在路径后面的字挪到下一段。没粘就原样返回。"""
+    if "MEDIA:" not in text:
+        return text
+    return _GLUED_MEDIA_RE.sub(lambda m: f"{m.group('head')}{m.group('path')}\n\n", text)
+
+
+def _on_transform_llm_output(**kwargs: Any) -> str | None:
+    """模型输出离开之前修正 MEDIA 行。
+
+    返回 ``None`` 表示不改（宿主沿用原文）；返回字符串则整体替换。这个钩子跑在
+    assistant 行落库之前，所以改完的文本会被存下来、下一轮重放也是改过的。
+    """
+    text = kwargs.get("response_text")
+    if not isinstance(text, str) or not text:
+        return None
+    fixed = _split_glued_media(text)
+    return fixed if fixed != text else None
+
+
 _USAGE = (
     "用法：/whalechan 80 · /whalechan off · /whalechan on · /whalechan beat 55 · "
     "/whalechan rhythm 85 · /whalechan custom <文本> · /whalechan custom clear · /whalechan sync"
@@ -325,6 +372,7 @@ def register(ctx: Any) -> None:
         emoji="🐳",
     )
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_hook("transform_llm_output", _on_transform_llm_output)
     ctx.register_command(
         "whalechan",
         _cmd_whalechan,
