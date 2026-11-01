@@ -4,3 +4,6 @@ __pycache__/
 venv/
 # 本机实际配置，不进仓库（模板是 config.example.json）
 plugins/whalechan/config.json
+# 私人称呼设定，只在本地。历史上进过库并已公开（87becc9/251f0b5），2026-11-01 起停追，
+# 只挡以后：老 clone 的历史里仍有那三行。
+plugins/whalechan/persona/user.md

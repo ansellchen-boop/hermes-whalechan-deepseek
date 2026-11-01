@@ -81,6 +81,8 @@ B 口径（任意短括号）没有信息量：≥6 轮的 201 个回合里 115 
 
   `backup/pre-rebuild-edc0e76` 分支里仍有旧版 `user.md`，别 `push --all`。
 
+- 2026-11-01：**更正上两条**——`user.md` 其实一直待在库里并随 `origin/main` 公开（由 `87becc9` + `251f0b5` 引入，`git ls-tree origin/main` 可见，blob `fa32d72c`，仓库 PUBLIC）。`.git/info/exclude` 对**已追踪**文件无效，`skip-worktree` 只挡本地改动、不挡已推内容，所以那套「三层防护」有一层是空的。当天按用户拍板走方案②：`git rm --cached plugins/whalechan/persona/user.md` + 写进 `.gitignore`，工作区文件保留，**只挡以后**；历史里那四行仍在 GitHub 上。顺带核实：**`docs/` 四篇也从来都在库里**，别以为被 exclude 挡住了。另外 `git rm --cached` 遇到 `skip-worktree` 位会被 git 误判成 sparse 路径而拒绝，得先 `git update-index --no-skip-worktree` 再删。
+
 ## 这些数字从哪来
 
 2026-10-31 补齐五子系统（`pyproject.toml` / `.python-version` / `Makefile` / `PROGRESS.md` / `scripts/probe_gates.py`）后，**`make check` 是唯一验收入口**：上面说的 74 个单测、9/9 闸门都在它里面，别再引用某次手跑的零散输出。

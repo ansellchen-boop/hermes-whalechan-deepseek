@@ -30,12 +30,12 @@
 
 ## 待办
 
-1. **push**：本地 `ahead 4`（`5acb3e1` / `655a3e6` / `6d21eb3` / 本轮这笔），老板说先不推，等他说。推之前 `git diff origin/main..HEAD --name-only | grep persona/user.md` 必须为空（`user.md` 被 `.git/info/exclude` 挡着，别 `git add`）。
+1. **push**：本地 `ahead 4`（`5acb3e1` / `655a3e6` / `6d21eb3` / 本轮这笔），老板说先不推，等他说。推之前 `git diff origin/main..HEAD --name-only | grep persona/user.md` 必须为空（`user.md` 已 `git rm --cached` 停追、`.gitignore` 挡着，这条 grep 是第二道保险）。
 2. **复测衰减**：新措辞 2026-11-01 23:10 起生效，现在 `make drift` 的数据全是旧措辞的。攒够新措辞的回合（建议 ≥100 回合、且含 ≥10 个 11 轮以上的会话）再跑，只看 11-20 / 21+ 两段的「内心」列。
 3. **drift 的 `INNER` 口径要不要放宽到「括号含动作词」**：放宽能抓到「（把锅端起来）」这类，但历史数字会不可比。**待老板拍板**，没动。
 4. **桌面长会话口吻**：只在 oneshot 上验过两轮，≥11 轮的桌面会话还没实测。
 5. `hermes-gateway` 的 systemd 单元旧告警（`TimeoutStopSec=7s` < 建议 70s），要 `hermes gateway install --force` 重生成；与本仓无关。
-6. **`persona/user.md` 其实早已入库、而且已经公开**（2026-11-01 查出来的，与 `AGENTS.md`/本文件原先的说法冲突）：该文件被 `87becc9` + `251f0b5` 两个提交加进仓库，`git ls-tree origin/main` 里也有，blob `fa32d72c`；仓库是 `github.com/ansellchen-boop/hermes-whalechan-deepseek`，`gh repo view` 报 **PUBLIC**。`.git/info/exclude` 里那条规则只对**未追踪**文件生效，对已追踪文件是白写的。内容只有三行称呼（老板 / 大肥鱼 / 嘎啦嘛），没有密钥。**待老板拍板**：① 就这样，只把文档里「永不入库」改成「已入库、内容是称呼约定」；② `git rm --cached` 停追并加 `.gitignore`（历史里仍有）；③ 重写历史 + force push（公开仓，破坏性）。
+6. ~~`persona/user.md` 早已入库且公开~~ → **已处置（2026-11-01，老板选方案②）**：`git rm --cached` 停追 + 写进 `.gitignore`，工作区文件保留，`git add -A --dry-run` 已验过不会带上；`persona.py:45 SECTION_FILES` 把 user.md 当**可选段**（`tests/test_persona.py:92 test_missing_file_is_skipped`），别人 clone 缺它照样能跑。**遗留**：历史提交 `87becc9` / `251f0b5` 里那四行称呼仍公开在 GitHub（仓库 PUBLIC），要彻底清只能重写历史 + force push，老板明确不做。
 
 ## 下一步（新会话开工顺序）
 
