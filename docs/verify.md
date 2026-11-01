@@ -8,7 +8,7 @@
 ## 一条命令
 
 ```bash
-make check          # = syntax + test(38) + apply-check + probe
+make check          # = syntax + test(39) + apply-check + probe
 ```
 
 三秒返回，**不碰网络、不改配置、不重启服务**。改完任何东西先跑它。
@@ -21,7 +21,7 @@ make check          # = syntax + test(38) + apply-check + probe
 | --- | --- | --- |
 | `make check` | 语法编译 + 单测 + 仓库与已安装配置是否一致 + 闸门探针 | 每次改完 |
 | `make syntax` | `compileall` 编译 `plugins` / `scripts` / `tests` | 只改了一行想快验 |
-| `make test` | 单测 38 个（`chance` / `persona` 纯逻辑） | 改了 `chance.py` / `persona.py` |
+| `make test` | 单测 39 个（`chance` / `persona` 纯逻辑） | 改了 `chance.py` / `persona.py` |
 | `make apply-check` | 仓库 vs `~/.hermes/` 已安装的人设/插件是否一致（只读） | 怀疑副本没同步 |
 | `make probe` | 闸门矩阵 9 个用例：直接调 `_on_pre_llm_call`，断言**注入文本**，临时 `HERMES_HOME` 不碰真配置 | 改了钩子或掷骰逻辑 |
 | `make drift` | 人设漂移曲线 + 节拍 A/B（读 `state.db` 和 `roll-log.jsonl`） | 攒够样本后 |

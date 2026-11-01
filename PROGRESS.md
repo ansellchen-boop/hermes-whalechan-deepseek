@@ -1,59 +1,38 @@
-# PROGRESS —— hermes-whalechan-deepseek
+# 进度
 
-> 给「下一个会话的我」看的。每个会话结束前改这里，开始前读这里。
-> 台账细节在 `docs/state.md`；入口规矩在 `AGENTS.md`（后者是本地文档，不进仓库）。这份回答四个问题：**现在什么状态、做完什么、正在做什么、被什么卡着**。决策的「为什么」在 `DECISIONS.md`，别写这里。
-> 最后更新：2026-10-31 16:05
+**最后验证**：2026-11-01 13:46 CST —— `make check` → `✓ syntax` / `Ran 50 tests OK` / `apply.py --check` ✓（人设 3781 = 3781）/ `probe` 9/9 / `✓ 无临时工件` → `✓ 全部通过`；`make audit` → 三份入口全 ✓。
 
 ## 当前状态
 
-**本节不写死 commit hash** —— 写它的那个提交无法把自己写进去，记了必然滞后一个提交，下一个 agent 照着报错。要看当前在哪：
+**0.5.0：人设从 config 搬进 SOUL.md。**
 
-```bash
-git log --oneline -1 && git status -sb    # ahead N = 有未推的
-```
-
-- 上次验证（2026-10-31 16:57）：`make check` → `Ran 38 tests OK` + 闸门 9/9 + `apply.py --check` ✓ + 临时工件扫清 → `✓ 全部通过`
-- 人设：**3785 字符 = `~/.hermes/config.yaml` 里 `agent.personalities.whalechan` 合成串的 `len()`**。源文件 `prefix.md` 2572 + `suffix.md` 1055 + `user.md` 156 = **3783**，差的 2 是两个拼接符。拿 3783 去比 3785 会误判成不一致
-- 指令审计：三份入口全绿，硬约束三件缺 0 条，`docs/` 缺声明 0 篇
-- 观察期样本：**写成命令，别写死行数**（这行以前写死「93 行 / 87 行」，半天就漂了）：
-  ```bash
-  wc -l < ~/.hermes/plugins/whalechan/roll-log.jsonl
-  grep -c '"session_id": "[^"]' ~/.hermes/plugins/whalechan/roll-log.jsonl
-  ```
-  计数口径是这个 grep：**带非空 `session_id` 的行**（日志里有 `session_id: ""` 的探针行，直接 `wc -l` 会多算）
+- `~/.hermes/SOUL.md` = **3781 字符**（strip 口径；`wc -m` 报 3782 是因为文件末尾留了一个换行）；prefix 2572 + user 98 + suffix 3091，差值是两个拼接符，首行是「你是「鲸鱼娘」…」
+- `grep -n personality ~/.hermes/config.yaml` → **无输出**（`agent.personalities.whalechan` 和 `display.personality` 全清）
+- 备份：`~/.hermes/backups/whalechan/state-20261101-134553.json` + `plugin-20261101-134553.tar.gz`（包里含旧 SOUL.md、旧插件全套；`--revert` 一起还原）
+- 三条独立骰：表情包 66.6% / 人设节拍 55% / 节奏 85%（会话前两轮必中）
+- 人设位置换了：现在在 system prompt **第一段**（identity slot），不在最末尾。代价是离当前用户消息远，所以「报进度 + 三段小结」这类结构性规矩靠节奏骰每轮补，人设文件只写为什么。
 
 ## 已完成
 
-- [x] 人设三段（prefix / user / suffix）合成写入 `agent.personalities.whalechan`，`apply.py` 幂等安装 / `--check` / `--revert`
-- [x] `sticker` 工具 + 图库索引缓存（7 天）+ 模糊匹配
-- [x] `/whalechan` 命令：概率 / 开关 / 追加设定 / sync / beat
-- [x] **人设节拍骰**（`beat_probability`，默认 55）：宿主每轮独立掷骰，命中往 user message 塞 🎭 行。这是解决「跑几轮就变客服」的主手段
-- [x] 悄悄话措辞从「最多两处、宁可空着」改成「至少一处、最多两处」，堵掉模型拿"可以省略"当借口的读法
-- [x] 头两轮立锚 + 会话前两轮强制命中（`should_fire_beat(early=True)`）
-- [x] `roll-log.jsonl` 命中日志（带 `session_id` / `early`）+ `scripts/measure_persona_drift.py` 测量脚本（分桶曲线 / 配对 / 表情包对照 / 节拍 A/B）
-- [x] 单测 38 个全绿；闸门矩阵 9/9
-- [x] 历史推送记录（**只记推过的，不代表此刻没有未推的**）：`b7d31a2` → `caae43e`（docs 四篇入库）→ `b31193e`（指令审计脚本）。**当前有没有未推的，一律现场跑 `git status -sb`，别看这一行** —— 它天生滞后，而且滞后几条说不准
-- [x] 独立复审（glm-5.3-flash 直连，只读，无执行权限）：裁决「有条件通过」，7 条指控核实 6 条属实；已按意见重拆 commit 并收掉小修
-- [x] 会话退出第四条件接进 `make check`（2026-10-31）：`scripts/check-session-exit.sh`（通用版，`--repo` 指定仓）+ `make exit-check`，并进 `check` 依赖；顺带把根 `AGENTS.md` 的「绿」判据补上这一行。qq-bridge 那侧早已自挂（`check.sh` 第 73 段），别重装
-- [x] 五子系统补齐（2026-10-31）：`pyproject.toml` / `.python-version` / `Makefile`（`make check` 一条命令）/ `PROGRESS.md`（本文件）/ `scripts/probe_gates.py`（闸门矩阵探针，9/9）；AGENTS.md 加技术栈版本表、验证命令表、§8 文档索引
+- `persona.py` 全量重写：`soul_file()` / `write_soul()` / `read_soul()` / `bootstrap()` 七种 action（installed / updated / already / drift / removed-by-user / refused / failed）/ `status()`
+- `chance.py` 加第三个骰子：`DEFAULT_RHYTHM_PROBABILITY = 85.0`、`RHYTHM_CONTEXTS`（5 条变体）、`pick_rhythm()`、`should_fire_rhythm()`
+- `__init__.py`：`_on_pre_llm_call` 注入 `🧭 本轮节奏`、`_log_roll` 加 `rhythm` 字段、`/whalechan rhythm N`、docstring 改成 SOUL 口径
+- `apply.py`：写 SOUL + 清旧键 + 同步插件；`--check` 判 `soul_same and not legacy_left and not drift`；备份包带 SOUL.md；`--revert` 先还原 SOUL 再还原插件
+- `tests/test_persona.py` 重写为 12 个 SOUL 用例（外人文拒绝测试确认 **force 也不覆盖**）
+- `tests/test_chance.py` 补 `RhythmTest` + `RhythmVariantTest` 共 11 个（39 → 50）。**补测抓到两个真缺陷**：`RHYTHM_CONTEXTS` 第 3 条漏写三段名、第 5 条没写 `[进度]` 字面格式 —— 模型只能照字面抄，漏了就自己发明小标题
+- 文档全线更新：`README.md`（原理对比表 + 命令 + config 示例）、`docs/architecture.md`（整篇重写）、`docs/pitfalls.md` §4/§6/§8、`docs/state.md`（50 测试 + 第三轮事实）、`docs/verify.md`、`AGENTS.md`、顶层 `/home/ubuntu/AGENTS.md`
+- `DECISIONS.md` 补 2026-11-01 那条五栏，旧 10-29 那条标注「已被取代」
 
-## 正在进行
+## 待办
 
-- [ ] **观察期攒样本**：判据是 `~/.hermes/plugins/whalechan/roll-log.jsonl` 里出现带 `session_id` 的新行（= 桌面和网关都跑新模块了）
-- [ ] 目标样本量：约 **262** 个带非空 `session_id` 的回合（推导在 `docs/state.md:27`：55% 命中率、α=0.05、power=0.8 分清 20pp。以前这里写 260 是取整，以 262 为准）
-- [ ] 到量后跑 `make drift`，看「节拍命中轮 vs 未命中轮」的口癖率差
+1. **实测口吻——还是没做过。** 上面全是静态验证：测试、闸门矩阵、字数比对。真判据是开一个新会话聊五轮，看是否真的报 `[进度]`、真的收尾三段、语气有没有掉成客服。这是 0.5.0 唯一没有证据的部分。
+2. **插件代码改动要重启承载进程才生效。** 桌面 `systemctl --user restart hermes-dashboard`（会掐断当前桌面会话，要先用 `systemd-run --user --on-active=60` 排延迟）；网关 `hermes-gateway`。**当前桌面会话跑的还是 0.4.x 的插件代码**，所以现在跟鲸鱼娘说话，节奏骰是不会注进来的。
+3. 观察期样本：目标约 262 个带非空 `session_id` 的回合，到量跑 `make drift` 看节奏骰命中率和口吻漂移。0.5.0 改了口径，之前的样本只能当基线。
+4. 本地 15 个文件还没提交（人设、插件、测试、文档一整套）。
 
-## 被阻塞 / 等拍板
+## 下一步（新会话开工顺序）
 
-- 备份分支 `backup/pre-rebuild-edc0e76` 里存着旧版 `user.md`（含私人称呼），**别 `push --all`**。确认历史没问题后可删（reflog 和 `edc0e76` 这个 hash 还能兜底）。
-- 无硬阻塞。
-- 待用户决定：① 要不要上方案 C（`agent/context_compressor.py` 的摘要模板加 `## Voice & Style`，需写成幂等 `apply.py` 补丁，`hermes update` 后要重跑）；② 两个测试会话要不要删（`local-8a298a43…`、`local-981e321c…`）。
-
-## 下一步 / 开工顺序
-
-1. `make check` —— 三秒确认地基没塌
-2. 看样本攒到哪了 —— **用这条，别用 `wc -l`**（日志里有 `session_id: ""` 的探针行，`wc -l` 会多算）：
-   ```bash
-   grep -c '"session_id": "[^"]' ~/.hermes/plugins/whalechan/roll-log.jsonl
-   ```
-3. 读本文件「正在进行」+ `docs/state.md`（样本量与判据口径）
+1. 重启 dashboard → 开新会话聊五轮 → 对照 `~/.hermes/plugins/whalechan/roll-log.jsonl` 的 `rhythm` 字段看注入有没有真发生
+2. 口吻不对就调 `suffix.md` 措辞或 `rhythm_probability`，别动架构
+3. 提交这 15 个文件（`persona/user.md` 仍被 skip-worktree 挡着，别 `git add`）
+4. 稳定后再考虑 `agent/context_compressor.py` 摘要模板加 `## Voice & Style`（旧方案 C，仍待决）

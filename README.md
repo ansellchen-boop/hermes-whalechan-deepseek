@@ -30,40 +30,42 @@ python3 apply.py --revert   # 回滚到最近一次备份
 
 `apply.py` 做三件事：
 
-1. 合成 `plugins/whalechan/persona/{prefix,user,suffix}.md` → `agent.personalities.whalechan`
-2. 把 `display.personality` 设成 `whalechan`
+1. 合成 `plugins/whalechan/persona/{prefix,user,suffix}.md` → `~/.hermes/SOUL.md`（身份层）
+2. 清掉 `config.yaml` 里的旧载体（`agent.personalities.whalechan` / `display.personality`）——人设只住一处
 3. 把 `plugins/whalechan`（含 `persona/`）同步进 `~/.hermes/plugins/whalechan`
 
-**人设自举只发生一次**：插件首次加载时，如果 `agent.personalities.whalechan` 不存在就写入并选中；
-之后你把它删了（比如 `/personality none` 再手改 config），它不会再抢回来。
-要重新装，跑 `/whalechan sync`；人设和插件不一致时（你手改过）也不会自动覆盖，只提示。
+**人设自举只在 `SOUL.md` 还是出厂身份时发生**：插件首次加载看到它空着、或者还是出厂英文身份
+（`You are Hermes Agent…`），就写入人设，旧的自动备份成 `SOUL.md.bak-<时间戳>`。
 
-`sync` 只动文本，不动开关：你把 `display.personality` 换成了别人，它只提醒一句、不会帮你切回来
-（真要换回来跑 `/personality whalechan`）；config 里那段如果是结构化（dict）人设，`sync` 直接拒绝，
-不会拿纯文本把它顶掉。
+之后遇到这三种情况**不会**自作主张：
 
-新会话之后人设才生效：网关（Telegram 等）下一条消息就带，桌面 / TUI 要新会话，
-或者用 `/personality whalechan` 重选一次。
+| `SOUL.md` 里是什么 | 插件怎么做 |
+| --- | --- |
+| 已经是本预设、内容相同 | `already`，不动 |
+| 已经是本预设、但你手改过 | `drift`，只提示；要强制同步跑 `/whalechan sync` |
+| 你清空过 | `removed-by-user`，不装回来；要恢复跑 `/whalechan sync` |
+| 别人的内容（既非出厂、也不含「鲸鱼娘」） | `refused`，**`sync` 也不覆盖** |
+
+生效时机：SOUL.md 走身份层、每次 API 调用重拼，网关下一条消息就带；
+桌面 / TUI 要新会话。插件代码改动要重启承载进程。
 
 ---
 
-## 为什么人设能压得住
+## 为什么搬到 SOUL.md
 
-Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 system prompt 的最末尾**
-（`agent/turn_context.py`：`effective_system = effective_system + "\n\n" + ephemeral_system_prompt`）。
-位置本身就是最强的约束——这也是上游 v0.3.0 把硬规矩拆成 `suffix` 想要的效果。
+| | `agent.personalities.whalechan`（0.4.x） | `~/.hermes/SOUL.md`（0.5.0+） |
+| --- | --- | --- |
+| 注入位置 | system prompt **最末尾**（`agent/turn_context.py`：`effective_system = effective_system + "\n\n" + ephemeral_system_prompt`） | identity slot，**第一段** |
+| cron / 定时任务 | 不传 | `cron/scheduler.py` 显式 `load_soul_identity=True`，带 |
+| 子代理 | 多数不传 | 走同一条 `build_system_prompt`，带 |
+| 刷新 | 每次 API 调用重拼 | 每次 API 调用重拼 |
 
-### 为什么人设留在 personality，不塞进插件
+搬过去换来的是**覆盖面**：人设不再只影响某一个会话类型，整个进程内所有对话都带。
+代价是**位置**：人设在最前面，离当前用户消息最远，长会话后半段容易稀释。
+所以纯粹的措辞留在人设里，**结构性**的规矩（报进度、收尾三段）交给插件每轮掷骰补一句。
 
-插件能往 system prompt 里写字，但只有一个口子 `register_system_prompt_section`，三条硬限制：
-
-| 限制 | 事实（源码位置） |
-| --- | --- |
-| 位置 | `position` 只允许 `after_memory`（`hermes_cli/plugins_dispatch.py`），渲染顺序是 `skills → memory → 插件段落 → profile → 时间戳 → 环境提示`（`agent/system_prompt.py`）——**不是末尾** |
-| 长度 | 单节 4000 字符、总量 8000（`plugins_dispatch.py`）；人设现在 3471 字，加两句就顶墙 |
-| 生效 | 接口 docstring 写明 "frozen into each new session prompt"——会话级冻结；而 personality 是 API 调用时拼的，下一轮就换 |
-
-所以人设留在 `agent.personalities.whalechan`，插件只负责**把它装进去**（自举 + `/whalechan sync`）。
+插件自己的 `register_system_prompt_section` 用不了：只有一个口子 `after_memory`、
+单节 4000 字、会话级冻结（`hermes_cli/plugins_dispatch.py`），塞人设既不够长也不够活。
 
 人设三段的拼法：
 
@@ -73,7 +75,8 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 | `plugins/whalechan/persona/user.md` | 你自己的追加设定（称呼、口癖、额外规矩），留空即无 | 中间 |
 | `plugins/whalechan/persona/suffix.md` | 每轮硬规矩：出声报进度、收尾三段、找帮手、悄悄话、中文思考 | **最后** |
 
-只写 prefix 的话，规矩全挤在提示词开头，聊过几十轮口气会飘回正式腔；suffix 落在最后一段，位置本身就是约束。
+`suffix.md` 排在拼接结果最后，但整份人设现在都住在 system prompt 第一段——所以它的「靠后」只在同一段内成立，不是全局最末。
+这也是为什么要加**节奏骰**：光靠后缀的位置已经压不住，结构性的提醒得每轮重新出现一次。
 
 ---
 
@@ -95,10 +98,11 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
 /whalechan off             # 关表情包
 /whalechan on              # 开表情包
 /whalechan beat 55         # 人设节拍概率改 55%（0 关，跟表情包互相独立）
+/whalechan rhythm 85       # 节奏提醒概率改 85%（0 关；管报进度 + 收尾三段小结）
 /whalechan custom <文本>    # 写追加设定（≤2000 字）
 /whalechan custom          # 看写了什么
 /whalechan custom clear    # 清空
-/whalechan sync            # 强制把人设文本重新写进 config（覆盖手改；不动 display.personality）
+/whalechan sync            # 强制把 persona/*.md 重新写进 SOUL.md（只覆盖本预设自己写的）
 ```
 
 或者直接改 `~/.hermes/plugins/whalechan/config.json`：
@@ -108,6 +112,7 @@ Hermes 把 `personalities.<name>` 的文本在**每次 API 调用时拼到 syste
   "enabled": true,
   "probability": 66.6,
   "beat_probability": 55,
+  "rhythm_probability": 85,
   "sources": [],
   "custom": ""
 }

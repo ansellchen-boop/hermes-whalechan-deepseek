@@ -7,15 +7,23 @@
 
 ## 机制层：已实测通过
 
-闸门矩阵 **9/9** 通过（`make probe`；用例：节拍 100/0、表情包 100/0、两者组合、`enabled=false` 下节拍仍活、`sources` 过滤、子代理豁免、custom 注入、roll-log 落盘）。
+闸门矩阵 **9/9** 通过（`make probe`；用例：节拍 100/0、表情包 100/0、两者组合、`enabled=false` 下节拍仍活、`sources` 过滤、子代理豁免、custom 注入、roll-log 落盘）。节奏骰没有独立的探针用例，靠 `roll-log` 的 `rhythm` 字段 + `tests/test_chance.py` 的 `RhythmTest` / `RhythmVariantTest`（11 个）覆盖。
 
-2026-10-30 第二轮改动已落地，单测 **38 个全绿**：
+2026-11-01 第三轮改动已落地，单测 **50 个全绿**（39 → 50，新增 11 个节奏用例）：
+
+- 人设载体从 `agent.personalities.whalechan` 换成 `~/.hermes/SOUL.md`；
+- 新增节奏骰（`chance.RHYTHM_CONTEXTS` / `pick_rhythm()` / `should_fire_rhythm()`），默认 85%；
+- `roll-log` 每条多一个 `rhythm` 字段。
+
+补测时抓到两个真缺陷：`RHYTHM_CONTEXTS` 第 3 条漏写三段名、第 5 条没写 `[进度]` 字面格式——模型只能照字面抄，漏了就自己发明小标题。
+
+2026-10-30 第二轮改动，除上面节奏相关的部分外仍然成立：
 
 - roll-log 记 `session_id` + `early`；
 - 测量脚本按会话精确归属并打对账行；
 - 节拍指令 5 套说法随机取一条（`chance.BEAT_CONTEXTS` / `pick_beat()`）；
 - 会话前两轮强制命中（`should_fire_beat(early=True)`，概率 0 仍算关）；
-- `/whalechan sync` 不再抢 `display.personality`；
+- `/whalechan sync` 只写 `SOUL.md`，不碰 `display.personality`；
 - 结构化（dict）人设拒绝覆盖。
 
 ## 行为层：还没攒够样本
@@ -45,7 +53,7 @@
 
 ## 这些数字从哪来
 
-2026-10-31 补齐五子系统（`pyproject.toml` / `.python-version` / `Makefile` / `PROGRESS.md` / `scripts/probe_gates.py`）后，**`make check` 是唯一验收入口**：上面说的 38 个单测、9/9 闸门都在它里面，别再引用某次手跑的零散输出。
+2026-10-31 补齐五子系统（`pyproject.toml` / `.python-version` / `Makefile` / `PROGRESS.md` / `scripts/probe_gates.py`）后，**`make check` 是唯一验收入口**：上面说的 50 个单测、9/9 闸门都在它里面，别再引用某次手跑的零散输出。
 
 改动如果动了 `chance.py` 的常量，`make test` 会第一时间红——那些数字是锚，不是估计。
 

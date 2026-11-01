@@ -32,10 +32,12 @@ systemd-run --user --on-active=60 --unit=<名字> --collect /bin/bash <脚本>
 
 `setsid` / `nohup` 没用——进程仍在同 cgroup，会被一起杀。
 
-## 4. 人设不能塞进插件
+## 4. 人设不能塞进插件，也别再塞回 personalities
 
-`register_system_prompt_section` 只允许 `position=after_memory`（渲染顺序 `skills → memory → 插件段落 → profile → 时间戳`，**不是末尾**），单节 4000 字（人设现 3471 字），docstring 写明会话级冻结。
-`personalities.*` 是每次 API 调用拼在 system prompt **最末尾**，且下一轮就换。所以人设只能住 `agent.personalities.whalechan`。
+`register_system_prompt_section` 只允许 `position=after_memory`（渲染顺序 `skills → memory → 插件段落 → profile → 时间戳`，**不是末尾**），单节 4000 字，docstring 写明会话级冻结。
+
+`agent.personalities.*` 是每次 API 调用拼在 system prompt **最末尾**、下一轮就换，而且 cron / 子代理路径不传。所以 2026-11-01 起人设改住 `~/.hermes/SOUL.md`（identity slot，第一段，`cron/scheduler.py` 显式 `load_soul_identity=True`）。
+代价是位置：人设现在离当前用户消息最远，所以「报进度 / 三段小结」这种结构性规矩交给插件**节奏骰**每轮补一句，人设文件里只写为什么。
 
 ## 5. 概率绝不能写进 prompt
 
@@ -44,7 +46,9 @@ systemd-run --user --on-active=60 --unit=<名字> --collect /bin/bash <脚本>
 
 ## 6. 骰子之间要独立
 
-`enabled=false` 只关表情包，不能顺带把节拍也关掉（关图的人不代表想变客服腔）；`sources` 对两条骰子同时生效；子代理（有 `parent_session_id`）两条都不掷。
+`enabled=false` 只关表情包，不能顺带把节拍和节奏也关掉（关图的人不代表想变客服腔）；`sources` 对三条骰子同时生效；子代理（有 `parent_session_id`）三条都不掷。
+
+三条各管一件事：表情包管**发不发图**、人设节拍管**嘴在不在**、节奏管**结构在不在**。捆在一起调一个必然带歪另两个。
 
 ## 7. 上限会变成下限
 
@@ -53,7 +57,7 @@ systemd-run --user --on-active=60 --unit=<名字> --collect /bin/bash <脚本>
 
 ## 8. `persona-state.json` 里的 `chars` 会滞后
 
-记录的是自举那一刻的字数，人设后来加段不会更新。别拿它判断人设有没有同步，直接读 `config.yaml` 里 `agent.personalities.whalechan` 的长度（一行命令见 `verify.md`）。
+记录的是自举那一刻的字数，人设后来加段不会更新。别拿它判断人设有没有同步，跑 `python3 apply.py --check`（它同时比 SOUL.md 正文和 config 旧键是否清干净）。
 
 ## 9. `apply.py` 写 config 要借 Hermes 的 venv
 

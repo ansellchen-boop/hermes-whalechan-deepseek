@@ -1,6 +1,6 @@
 name: whalechan
-version: 0.4.0
-description: "鲸鱼娘（DeepSeek娘）预设：插件自带人设三段，首次加载自动写进 agent.personalities.whalechan（不改就一直是人设本体）；外加 sticker 工具（按场景/心情从社区图库找图，返回可直接粘贴的 Markdown 图片行）、每轮掷骰、/whalechan 命令（概率/开关/追加设定/人设同步）。移植自 dsh-whalechan-herself（MIT）。"
+version: 0.5.0
+description: "鲸鱼娘（DeepSeek娘）预设：插件自带人设三段，首次加载自动写进 SOUL.md（身份层，cron 也带；同时清掉 config 里的旧 personality 键）；外加 sticker 工具（按场景/心情从社区图库找图，返回可直接粘贴的 MEDIA 图片行）、每轮三条掷骰（表情包 / 人设节拍 / 节奏提醒）、/whalechan 命令（概率/开关/追加设定/人设同步）。移植自 dsh-whalechan-herself（MIT）。"
 author: Weidows (original) / Hermes port
 kind: standalone
 provides_tools:

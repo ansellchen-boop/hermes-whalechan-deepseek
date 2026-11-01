@@ -179,5 +179,85 @@ class BeatVariantTest(unittest.TestCase):
                          "只在 desktop、telegram 上掷骰")
 
 
+class RhythmTest(unittest.TestCase):
+    """节奏骰：报进度 + 三段小结。三条骰子里最独立的一条。"""
+
+    def test_default_rhythm_is_eighty_five(self):
+        config = chance.load_config(Path(tempfile.gettempdir()) / "no-such-whalechan.json")
+        self.assertEqual(config["rhythm_probability"], 85.0)
+
+    def test_zero_rhythm_never_fires(self):
+        config = {"rhythm_probability": 0.0, "sources": []}
+        rng = random.Random(1)
+        self.assertFalse(any(chance.should_fire_rhythm(config, rng=rng) for _ in range(300)))
+
+    def test_rhythm_ignores_other_switches(self):
+        # 关表情包、关节拍，都不该顺带把结构提醒也关掉
+        config = {"enabled": False, "probability": 0.0, "beat_probability": 0.0,
+                  "rhythm_probability": 100.0, "sources": []}
+        self.assertFalse(chance.should_fire(config))
+        self.assertFalse(chance.should_fire_beat(config))
+        self.assertTrue(chance.should_fire_rhythm(config))
+
+    def test_rhythm_sources_filter(self):
+        config = {"rhythm_probability": 100.0, "sources": ["telegram"]}
+        self.assertFalse(chance.should_fire_rhythm(config, platform="desktop"))
+        self.assertTrue(chance.should_fire_rhythm(config, platform="telegram"))
+        self.assertTrue(chance.should_fire_rhythm(config, platform=""))
+
+    def test_rhythm_save_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.json"
+            config = chance.save_config({"rhythm_probability": 12.34}, path)
+            self.assertEqual(config["rhythm_probability"], 12.3)
+            # 另两条概率不该被顺手改掉
+            self.assertEqual(config["probability"], 66.6)
+            self.assertEqual(config["beat_probability"], 55.0)
+            config = chance.save_config({"rhythm_probability": 0}, path)
+            self.assertEqual(config["rhythm_probability"], 0.0)
+
+
+class RhythmVariantTest(unittest.TestCase):
+    """节奏措辞：换说法、前几轮必中、内容必须真的点到要点。"""
+
+    def test_variants_are_distinct_and_constrained(self):
+        contexts = chance.RHYTHM_CONTEXTS
+        self.assertGreaterEqual(len(contexts), 3)
+        self.assertEqual(len(set(contexts)), len(contexts))
+        for text in contexts:
+            self.assertIn("[进度]", text, text)
+            self.assertIn("**进度小结**", text, text)
+            # 三段必须写全，否则模型会自己发明小标题
+            for section in ("背景", "当前", "下一步"):
+                self.assertIn(section, text, text)
+
+    def test_header_marks_itself_as_host_generated(self):
+        # 不标清楚，模型会去接「你」的话头当成用户在说话
+        self.assertIn("🧭", chance.RHYTHM_HEADER)
+        self.assertIn("不是老板说的话", chance.RHYTHM_HEADER)
+
+    def test_pick_rhythm_only_returns_known_variants(self):
+        rng = random.Random(7)
+        picked = {chance.pick_rhythm(rng=rng) for _ in range(300)}
+        self.assertEqual(picked, set(chance.RHYTHM_CONTEXTS))
+
+    def test_early_context_is_its_own_thing(self):
+        self.assertNotIn(chance.RHYTHM_EARLY_CONTEXT, chance.RHYTHM_CONTEXTS)
+        self.assertIn("`[进度]`", chance.RHYTHM_EARLY_CONTEXT)
+        self.assertIn("**进度小结**", chance.RHYTHM_EARLY_CONTEXT)
+        self.assertIs(chance.pick_rhythm(early=True), chance.RHYTHM_EARLY_CONTEXT)
+
+    def test_early_forces_hit_even_when_dice_miss(self):
+        config = {"rhythm_probability": 85.0, "sources": []}
+        rng = random.Random(1)
+        self.assertTrue(all(chance.should_fire_rhythm(config, rng=rng, early=True) for _ in range(200)))
+
+    def test_early_does_not_override_zero_or_sources(self):
+        self.assertFalse(chance.should_fire_rhythm({"rhythm_probability": 0.0, "sources": []}, early=True))
+        blocked = {"rhythm_probability": 85.0, "sources": ["telegram"]}
+        self.assertFalse(chance.should_fire_rhythm(blocked, platform="desktop", early=True))
+        self.assertTrue(chance.should_fire_rhythm(blocked, platform="telegram", early=True))
+
+
 if __name__ == "__main__":
     unittest.main()

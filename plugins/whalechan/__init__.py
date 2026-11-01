@@ -8,10 +8,15 @@ Hermes 的插件接口上：
   往这一轮的 user message **末尾**追加一行提示（宿主是 ``content + "\n\n" + injection``，
   不是插在前面），人设据此决定发不发。
 
-人设本身走 Hermes 的 ``personalities.whalechan``，但文本是插件自带的
-``persona/`` 三段：首次加载时 ``persona.bootstrap()`` 自动写进 config，
-之后改人设用 ``/whalechan sync``。为什么不能塞进 ``register_system_prompt_section``
-（位置只允许 after_memory、4000 字上限、会话级冻结）见 ``persona.py`` 顶部说明。
+人设本身住 ``~/.hermes/SOUL.md``（system prompt 的 identity slot，cron 和子代理都带），
+文本来自插件自带的 ``persona/`` 三段：首次加载时 ``persona.bootstrap()`` 合成并写进去，
+同时清掉 config 里的旧载体 ``agent.personalities.whalechan``；之后改人设用 ``/whalechan sync``。
+为什么不能塞进 ``register_system_prompt_section``（位置只允许 after_memory、4000 字上限、
+会话级冻结）见 ``persona.py`` 顶部说明。
+
+宿主骰子有三条，互相独立：``sticker`` 管发不发图、``beat`` 管嘴在不在、``rhythm`` 管
+结构在不在（每轮补一句「报 [进度] + 收尾三段小结」）。人设在 SOUL 里位置最靠前，
+结构性的规矩得靠 ``rhythm`` 每轮提醒一次才压得住。
 """
 
 from __future__ import annotations
@@ -133,11 +138,13 @@ def _is_early_turn(kwargs: dict[str, Any]) -> bool:
 
 
 def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
-    """每一轮（turn）开头掷一次骰；命中就给这一轮塞一行提示。
+    """每一轮（turn）开头掷三条骰；命中就给这一轮塞提示。
 
     - 子代理会话（有 parent_session_id）不掷，免得子任务也去发表情包；
     - 用户写的「追加设定」每轮现读，写进同一个 context，改完下一轮生效；
     - 前两轮节拍强制命中（概率为 0 时除外）：锚点不交给骰子；
+    - 节奏骰（报进度 + 三段小结）独立掷：人设住 SOUL.md 后站在最前面，
+      位置优势没了，这三条最吃位置的规矩必须每轮从 user message 侧补；
     - 任何异常都吞掉：掷骰失败不能把正常轮次搞挂。
     """
     try:
@@ -150,11 +157,15 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             parts.append(f"{chance.CUSTOM_HEADER}\n\n{custom}")
         platform = str(kwargs.get("platform") or "")
         early = _is_early_turn(kwargs)
-        # 两条骰子互相独立：表情包管「发不发图」，节拍管「嘴还在不在」。
+        # 三条骰子互相独立：表情包管「发不发图」，节拍管「嘴还在不在」，
+        # 节奏管「结构有没有立住」。
         sticker_hit = chance.should_fire(config, platform=platform)
         beat_hit = chance.should_fire_beat(config, platform=platform, early=early)
+        rhythm_hit = chance.should_fire_rhythm(config, platform=platform, early=early)
         if sticker_hit:
             parts.append(chance.HIT_CONTEXT)
+        if rhythm_hit:
+            parts.append(f"{chance.RHYTHM_HEADER}\n{chance.pick_rhythm(early=early)}")
         if beat_hit:
             # 命中时换一种说法：同一条指令原样重复会被历史自举磨成背景噪音，
             # 新鲜度比频率有用（见 chance.py 里 BEAT_CONTEXTS 的注释）。
@@ -166,6 +177,7 @@ def _on_pre_llm_call(**kwargs: Any) -> dict[str, str] | None:
             platform=platform,
             beat=beat_hit,
             sticker=sticker_hit,
+            rhythm=rhythm_hit,
             early=early,
         )
         if parts:
@@ -180,7 +192,8 @@ ROLL_LOG = "roll-log.jsonl"
 _ROLL_LOG_MAX_BYTES = 512 * 1024
 
 
-def _log_roll(*, session_id: str, platform: str, beat: bool, sticker: bool, early: bool) -> None:
+def _log_roll(*, session_id: str, platform: str, beat: bool, sticker: bool,
+              rhythm: bool = False, early: bool) -> None:
     """追加一行命中记录。写失败只记 debug，绝不影响这一轮。
 
     带 ``session_id`` 是为了让测量脚本精确归属：老版本只按时间戳找「最近的前一个
@@ -202,6 +215,7 @@ def _log_roll(*, session_id: str, platform: str, beat: bool, sticker: bool, earl
                     "platform": platform,
                     "beat": beat,
                     "sticker": sticker,
+                    "rhythm": rhythm,
                     "early": early,
                 },
                 ensure_ascii=False,
@@ -212,25 +226,23 @@ def _log_roll(*, session_id: str, platform: str, beat: bool, sticker: bool, earl
 
 _USAGE = (
     "用法：/whalechan 80 · /whalechan off · /whalechan on · /whalechan beat 55 · "
-    "/whalechan custom <文本> · /whalechan custom clear · /whalechan sync"
+    "/whalechan rhythm 85 · /whalechan custom <文本> · /whalechan custom clear · /whalechan sync"
 )
 
 
 def _persona_line() -> str:
-    """状态行：插件里多少字、config 里多少字、选中没有。"""
+    """状态行：插件里多少字、SOUL.md 里多少字、对齐没有。"""
     try:
         info = persona.status()
     except Exception as exc:  # noqa: BLE001 - 读配置失败不该让状态命令挂掉
-        return f"人设：读不到配置（{exc}）"
+        return f"人设：读不到状态（{exc}）"
     head = f"人设：插件自带 {info['local_chars']} 字"
-    if not info["config_chars"]:
-        return f"{head} · config 里没装 → /whalechan sync"
-    where = f"config {info['config_chars']} 字（{info['source']}），display.personality={info['display'] or '(空)'}"
+    if not info["soul_chars"]:
+        return f"{head} · SOUL.md 里没有 → /whalechan sync"
     if not info["same"]:
-        return f"{head} · {where} → 和插件不一致，/whalechan sync 同步"
-    if info["display"] != persona.PERSONALITY_NAME:
-        return f"{head} · {where} → 没选中，/whalechan sync 会重选"
-    return f"{head} · 已同步（{where}）"
+        return f"{head} · SOUL.md {info['soul_chars']} 字 → 和插件不一致，/whalechan sync 同步"
+    tail = "，config 里还留着旧 personality 键（下次 sync 会清）" if info["legacy"] else ""
+    return f"{head} · 已同步到 SOUL.md（{info['soul_chars']} 字{tail}）"
 
 
 def _cmd_whalechan(raw_args: str = "") -> str:
@@ -245,6 +257,7 @@ def _cmd_whalechan(raw_args: str = "") -> str:
         return (
             f"表情包掷骰：{state} · 概率 {config.get('probability')}%\n"
             f"人设节拍：{config.get('beat_probability')}%（0 关；前两轮强制命中；跟表情包互相独立）\n"
+            f"节奏提醒：{config.get('rhythm_probability')}%（0 关；报进度 + 三段小结，前两轮必中）\n"
             + (f"{sources_line}\n" if sources_line else "")
             + f"追加设定：{len(custom)}/{chance.DEFAULT_CUSTOM_MAX} 字，{tail}\n"
             f"{_persona_line()}\n"
@@ -282,6 +295,17 @@ def _cmd_whalechan(raw_args: str = "") -> str:
             return f"看不懂「{text}」。" + _USAGE
         config = chance.save_config({"beat_probability": value})
         return f"人设节拍钉在 {config.get('beat_probability')}%（0 关；跟表情包那条骰子各掷各的）"
+    if lowered.startswith("rhythm"):
+        text = args[len("rhythm"):].strip()
+        if not text:
+            return (f"节奏提醒：{config.get('rhythm_probability')}%"
+                    "（0 关，100 每轮都提醒；报进度 + 收尾三段小结）")
+        try:
+            value = float(text)
+        except ValueError:
+            return f"看不懂「{text}」。" + _USAGE
+        config = chance.save_config({"rhythm_probability": value})
+        return f"节奏提醒钉在 {config.get('rhythm_probability')}%（下一轮生效，跟另外两条骰子各掷各的）"
     try:
         value = float(args)
     except ValueError:

@@ -3,11 +3,12 @@
 
 做三件事：
 1. 合成 `plugins/whalechan/persona/{prefix,user,suffix}.md`（人设跟着插件目录走）
-   → `config.yaml` 的 `agent.personalities.whalechan`
-2. 把 `display.personality` 设成 `whalechan`
+   → `<HERMES_HOME>/SOUL.md`（身份层，system prompt 第一段，cron 也带）
+2. 清掉 `config.yaml` 里的旧载体 `agent.personalities.whalechan` 和 `display.personality`
+   —— 人设只能住一处，两份同时注入会互相稀释
 3. 把 `plugins/whalechan`（含 persona/）同步进 `<HERMES_HOME>/plugins/whalechan`
 
-插件自己也会在首次加载时做第 1、2 步（只在 config 里从没装过时），
+插件自己也会在首次加载时做第 1、2 步（只在 SOUL.md 里还是出厂身份时），
 所以正常情况下 `hermes plugins install` 装完就够了；这个脚本负责强制同步和回滚。
 
 用法：
@@ -16,8 +17,8 @@
     python3 apply.py --dry-run    # 说清楚要改什么，不落盘
     python3 apply.py --revert     # 回滚到最近一次备份
 
-改完人设或插件后重跑一次；personality 是 API 调用时拼进 system prompt 最末尾的，
-网关下一条消息生效，桌面/TUI 要新会话（或 `/personality whalechan` 重选一次）。
+SOUL.md 走 identity slot，**每次 API 调用都会重新拼**，所以网关下一条消息就生效；
+桌面 / TUI 要新会话。旧内容会被备份成 `SOUL.md.bak-<时间戳>`。
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tarfile
@@ -32,8 +34,9 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-HERMES_HOME = Path.home() / ".hermes"
+HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
 CONFIG = HERMES_HOME / "config.yaml"
+SOUL = HERMES_HOME / "SOUL.md"
 BACKUP_DIR = HERMES_HOME / "backups" / "whalechan"
 
 #: 人设三段在插件目录里（不是仓库根）：从 GitHub 装 `…/plugins/whalechan` 子目录时，
@@ -43,7 +46,9 @@ PLUGIN_DST = HERMES_HOME / "plugins" / "whalechan"
 PERSONA = PLUGIN_SRC / "persona"
 
 PLUGIN_FILES = ("__init__.py", "chance.py", "persona.py", "stickers.py", "plugin.yaml")
-TARGET_KEYS = ("agent.personalities.whalechan", "display.personality")
+
+#: 人设搬进 SOUL.md 之后要清掉的旧键（留着就是两份人设打对台）。
+LEGACY_KEYS = ("agent.personalities.whalechan", "personalities.whalechan", "display.personality")
 
 
 # ---------------------------------------------------------------- persona 合成
@@ -59,6 +64,14 @@ def compose_persona() -> str:
     import persona as plugin_persona  # noqa: PLC0415 - 插件目录要先进 sys.path
 
     return plugin_persona.compose(PERSONA)
+
+
+def install_soul(text: str) -> None:
+    """写 SOUL.md：复用插件里那份写函数，保证和「插件自举」是同一条路。"""
+    sys.path.insert(0, str(PLUGIN_SRC))
+    import persona as plugin_persona  # noqa: PLC0415
+
+    plugin_persona.write_soul(text)
 
 
 # ---------------------------------------------------------------- config 读写
@@ -90,9 +103,12 @@ def current_state() -> dict:
     data = _load_yaml()
     # agent.personalities 是 hermes_cli.personality 优先读的那层；顶层 personalities
     # 是历史形状（#643），两者都认，同名时 agent 层赢。这里照同样规则读回旧值。
-    persona = _dig(data, "agent.personalities.whalechan") or _dig(data, "personalities.whalechan") or ""
+    legacy = _dig(data, "agent.personalities.whalechan") or _dig(data, "personalities.whalechan") or ""
+    soul = SOUL.read_text(encoding="utf-8-sig").strip() if SOUL.is_file() else ""
     return {
-        "persona": persona,
+        "soul": soul,
+        "legacy_persona": legacy if isinstance(legacy, str) else "",
+        "legacy_structured": isinstance(legacy, dict),
         "personality": _dig(data, "display.personality") or "",
     }
 
@@ -109,6 +125,10 @@ def backup() -> Path:
     if PLUGIN_DST.is_dir():
         with tarfile.open(BACKUP_DIR / f"plugin-{stamp}.tar.gz", "w:gz") as tar:
             tar.add(PLUGIN_DST, arcname="whalechan")
+            # SOUL.md 也塞进同一个包：回滚时人设和插件一起还原，
+            # 不然会出现「插件退回旧版、人设却是新版」的错配。
+            if SOUL.is_file():
+                tar.add(SOUL, arcname="SOUL.md")
     return meta
 
 
@@ -123,17 +143,30 @@ def revert() -> int:
         print(f"没有备份可回滚：{BACKUP_DIR}")
         return 1
     state = json.loads(meta.read_text(encoding="utf-8"))
-    _write_key(TARGET_KEYS[0], state.get("persona") or None)
-    _write_key("display.personality", state.get("personality") or None)
-    if _dig(_load_yaml(), "personalities.whalechan") is not None:
-        _write_key("personalities.whalechan", None)
-    # 回滚也要把人设目录一起还原：旧备份（v0.3 之前）只有插件文件，没有 persona/
+    # 先解开插件包：里面有旧版 persona/ 和当时那份 SOUL.md。
     archive = _latest("plugin-*.tar.gz")
     if archive:
-        if PLUGIN_DST.exists():
-            shutil.rmtree(PLUGIN_DST)
         with tarfile.open(archive, "r:gz") as tar:
-            tar.extractall(HERMES_HOME / "plugins")
+            names = tar.getnames()
+            if "SOUL.md" in names:
+                handle = tar.extractfile("SOUL.md")
+                if handle:
+                    SOUL.write_text(handle.read().decode("utf-8"), encoding="utf-8")
+                    print(f"SOUL.md 已还原（{archive.name}）")
+            if PLUGIN_DST.exists():
+                shutil.rmtree(PLUGIN_DST)
+            tar.extractall(HERMES_HOME / "plugins",
+                           members=[m for m in tar.getmembers() if m.name.startswith("whalechan")])
+    # 再恢复 config 里的旧载体（备份时若还是 personality 形态，这里会写回去）。
+    old_persona = state.get("legacy_persona") or state.get("persona") or None
+    old_display = state.get("personality") or None
+    if old_persona and not state.get("legacy_structured"):
+        _write_key("agent.personalities.whalechan", old_persona)
+    else:
+        _write_key("agent.personalities.whalechan", None)
+    _write_key("display.personality", old_display)
+    if _dig(_load_yaml(), "personalities.whalechan") is not None:
+        _write_key("personalities.whalechan", None)
     print(f"已回滚到 {meta.name}")
     print("提示：网关下一条消息生效；桌面 / TUI 要新会话。")
     return 0
@@ -209,15 +242,15 @@ def main() -> int:
     persona = compose_persona()
     state = current_state()
     drift = plugin_drift()
-    persona_same = state["persona"].strip() == persona.strip()
-    personality_same = state["personality"] == "whalechan"
+    soul_same = state["soul"].strip() == persona.strip()
+    legacy_left = bool(state["legacy_persona"]) or state["personality"] == "whalechan"
 
-    print(f"persona: {len(persona)} 字符（当前 config 里 {len(state['persona'])}）")
-    print(f"display.personality: {state['personality'] or '(空)'} → whalechan")
+    print(f"人设: {len(persona.strip())} 字符（当前 SOUL.md {len(state['soul'])}）")
+    print(f"旧载体: {'还在（personality 键会清掉）' if legacy_left else '已清空'}")
     print(f"插件差异: {', '.join(drift) if drift else '无'}")
 
     if args.check:
-        ok = persona_same and personality_same and not drift
+        ok = soul_same and not legacy_left and not drift
         print("✓ 已是最新" if ok else "✗ 有差异，跑一次 python3 apply.py")
         return 0 if ok else 2
 
@@ -225,24 +258,26 @@ def main() -> int:
         print("（dry-run，未写入）")
         return 0
 
-    if persona_same and personality_same and not drift:
+    if soul_same and not legacy_left and not drift:
         print("✓ 已是最新，什么都没改")
         return 0
 
     meta = backup()
     print(f"备份: {meta}")
-    _write_key(TARGET_KEYS[0], persona)
-    _write_key("display.personality", "whalechan")
-    # 顶层 personalities 是历史形状（#643）；统一放 agent 层后把旧键清掉，别留两份打对台。
-    if _dig(_load_yaml(), "personalities.whalechan") is not None:
-        _write_key("personalities.whalechan", None)
+    install_soul(persona)
+    # 人设只住 SOUL.md 一处：旧载体全部清掉，否则同一份人设注入两遍、
+    # 且 personality 那份会盖在 SOUL 后面抢话。
+    for key in LEGACY_KEYS:
+        if _dig(_load_yaml(), key) is not None:
+            _write_key(key, None)
     install_plugin()
 
     state = current_state()
     drift = plugin_drift()
-    ok = state["persona"].strip() == persona.strip() and state["personality"] == "whalechan" and not drift
-    print("✓ 写入并回读验证通过" if ok else "✗ 回读不一致，检查 config.yaml")
-    print("生效方式：网关 / Telegram 下一条消息起；桌面 / TUI 需要新会话，或 /personality whalechan 重选一次。")
+    legacy_left = bool(state["legacy_persona"]) or state["personality"] == "whalechan"
+    ok = state["soul"].strip() == persona.strip() and not legacy_left and not drift
+    print("✓ 写入并回读验证通过" if ok else "✗ 回读不一致，检查 SOUL.md / config.yaml")
+    print("生效方式：网关下一条消息起；桌面 / TUI 需要新会话。")
     return 0 if ok else 1
 
 

@@ -1,6 +1,10 @@
 """persona.py 的单测：人设合成 + 自举（不联网，不写真实 ~/.hermes）。
 
 跑法：``python3 -m unittest discover -s tests -v``（在仓库根目录）
+
+人设载体从 2026-11-01 起是 ``<HERMES_HOME>/SOUL.md``（身份槽），
+不再是 ``agent.personalities.whalechan``。这里的用例跟着换：断言 SOUL.md 的内容，
+以及「config 里的旧键被清掉」——两处同时注入会互相稀释。
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ class Sandbox(unittest.TestCase):
         self.home = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
         self.config = self.home / "config.yaml"
+        self.soul = self.home / "SOUL.md"
         self.writer = _fake_writer_factory(self.config)
 
         self.persona_dir = self.home / "persona"
@@ -72,6 +77,12 @@ class Sandbox(unittest.TestCase):
     def read_config(self):
         return yaml.safe_load(self.config.read_text(encoding="utf-8")) or {}
 
+    def read_soul(self):
+        return self.soul.read_text(encoding="utf-8") if self.soul.is_file() else ""
+
+    def write_soul(self, text: str):
+        self.soul.write_text(text, encoding="utf-8")
+
 
 class ComposeTest(Sandbox):
     def test_order_and_comment_stripping(self):
@@ -88,114 +99,104 @@ class ComposeTest(Sandbox):
 
 
 class BootstrapTest(Sandbox):
-    def test_first_run_installs_and_selects(self):
+    def test_first_run_writes_soul(self):
+        result = self.bootstrap()
+        self.assertEqual(result["action"], "installed")
+        self.assertEqual(self.read_soul(), persona.compose(self.persona_dir))
+        self.assertTrue((self.home / "plugins" / "whalechan" / "persona-state.json").is_file())
+
+    def test_first_run_clears_legacy_config_keys(self):
+        """旧载体留着就是两份人设打对台：装 SOUL 的同时必须清掉。"""
+        self.config.write_text(yaml.safe_dump(
+            {"agent": {"personalities": {"whalechan": "旧的人设"}},
+             "display": {"personality": "whalechan"}}, allow_unicode=True), encoding="utf-8")
         result = self.bootstrap()
         self.assertEqual(result["action"], "installed")
         config = self.read_config()
-        self.assertEqual(config["agent"]["personalities"]["whalechan"], persona.compose(self.persona_dir))
-        self.assertEqual(config["display"]["personality"], "whalechan")
-        self.assertTrue((self.home / "plugins" / "whalechan" / "persona-state.json").is_file())
+        self.assertNotIn("whalechan", (config.get("agent") or {}).get("personalities") or {})
+        self.assertNotIn("personality", config.get("display") or {})
 
     def test_second_run_is_noop(self):
         self.bootstrap()
-        before = self.config.read_text(encoding="utf-8")
+        before = self.read_soul()
         result = self.bootstrap()
         self.assertEqual(result["action"], "already")
-        self.assertEqual(self.config.read_text(encoding="utf-8"), before)
+        self.assertEqual(self.read_soul(), before)
 
     def test_removed_by_user_stays_removed(self):
+        """用户把 SOUL.md 清掉过，就别自动装回去——那是他的意思。"""
         self.bootstrap()
-        # 用户把 agent 层删掉（例如 /personality none 后手改 config）
-        writer = _fake_writer_factory(self.config)
-        writer(self.config, "agent.personalities.whalechan", None)
+        self.soul.unlink()
         result = self.bootstrap()
         self.assertEqual(result["action"], "removed-by-user")
-        self.assertNotIn("whalechan", (self.read_config().get("agent") or {}).get("personalities") or {})
+        self.assertEqual(self.read_soul(), "")
 
-    def test_force_syncs_after_removal(self):
+    def test_force_restores_after_removal(self):
         self.bootstrap()
-        writer = _fake_writer_factory(self.config)
-        writer(self.config, "agent.personalities.whalechan", None)
+        self.soul.unlink()
         result = self.bootstrap(force=True)
         self.assertIn(result["action"], {"installed", "updated"})
-        self.assertEqual(self.read_config()["agent"]["personalities"]["whalechan"],
-                         persona.compose(self.persona_dir))
+        self.assertEqual(self.read_soul(), persona.compose(self.persona_dir))
 
-    def test_drift_is_not_overwritten_without_force(self):
+    def test_hand_edited_soul_is_not_overwritten_without_force(self):
+        """SOUL.md 被改过（但仍是本预设写的）→ 判 drift，等 force。"""
         self.bootstrap()
-        writer = _fake_writer_factory(self.config)
-        writer(self.config, "agent.personalities.whalechan", "我自己手改的人设")
+        self.write_soul("鲸鱼娘手改过的一段\n")
         result = self.bootstrap()
         self.assertEqual(result["action"], "drift")
-        self.assertEqual(self.read_config()["agent"]["personalities"]["whalechan"], "我自己手改的人设")
+        self.assertEqual(self.read_soul(), "鲸鱼娘手改过的一段\n")
 
-    def test_other_display_personality_is_not_stolen(self):
-        self.bootstrap()
-        writer = _fake_writer_factory(self.config)
-        writer(self.config, "display.personality", "kawaii")
+    def test_foreign_soul_is_refused(self):
+        """SOUL.md 里是别人写的内容：无条件拒绝，连 force 都不碰。"""
+        self.write_soul("# 我的自定义身份\n\n你是一个严谨的代码审查员。\n")
+        result = self.bootstrap(force=True)
+        self.assertEqual(result["action"], "refused")
+        self.assertIn("不敢覆盖", result["message"])
+        self.assertEqual(self.read_soul(), "# 我的自定义身份\n\n你是一个严谨的代码审查员。\n")
+
+    def test_factory_soul_is_replaced(self):
+        """出厂英文身份 = 用户没写过东西，可以安全覆盖。"""
+        self.write_soul("You are Hermes Agent, an intelligent AI assistant created by Nous Research.\n")
         result = self.bootstrap()
-        self.assertEqual(result["action"], "unselected")
+        self.assertEqual(result["action"], "updated")
+        self.assertEqual(self.read_soul(), persona.compose(self.persona_dir))
+
+    def test_other_display_personality_is_kept(self):
+        """display.personality 指向别的人设时不动它。"""
+        self.config.write_text(yaml.safe_dump({"display": {"personality": "kawaii"}},
+                                              allow_unicode=True), encoding="utf-8")
+        self.bootstrap(force=True)
         self.assertEqual(self.read_config()["display"]["personality"], "kawaii")
 
-    def test_root_level_personality_is_recognised(self):
-        # 历史形状：顶层 personalities.whalechan（0.3.x 的 apply.py 写的）
-        text = persona.compose(self.persona_dir)
-        self.config.write_text(
-            yaml.safe_dump({"personalities": {"whalechan": text}, "display": {"personality": "whalechan"}},
-                           allow_unicode=True),
-            encoding="utf-8",
-        )
-        result = self.bootstrap()
-        self.assertEqual(result["action"], "already")
-        self.assertNotIn("agent", self.read_config())
+    def test_structured_persona_is_left_alone(self):
+        """手写的结构化人设（dict）不替用户删。"""
+        self.config.write_text(yaml.safe_dump(
+            {"agent": {"personalities": {"whalechan": {"text": "别人写的结构"}}}},
+            allow_unicode=True), encoding="utf-8")
+        self.bootstrap(force=True)
+        self.assertEqual(self.read_config()["agent"]["personalities"]["whalechan"],
+                         {"text": "别人写的结构"})
 
     def test_missing_persona_files_fail_soft(self):
         empty = self.home / "empty"
         empty.mkdir()
         result = self.bootstrap(root=empty)
         self.assertEqual(result["action"], "failed")
-        self.assertFalse(self.config.exists())
+        self.assertFalse(self.soul.exists())
 
 
 class StatusTest(Sandbox):
     def test_status_before_and_after(self):
         before = persona.status(self.persona_dir)
-        self.assertEqual(before["config_chars"], 0)
+        self.assertEqual(before["soul_chars"], 0)
         self.assertFalse(before["same"])
         self.assertEqual(before["local_chars"], len(persona.compose(self.persona_dir).strip()))
 
         self.bootstrap()
         after = persona.status(self.persona_dir)
         self.assertTrue(after["same"])
-        self.assertEqual(after["display"], "whalechan")
-        self.assertEqual(after["source"], "agent")
-
-
-class DisplayAndStructuredTest(Sandbox):
-    def test_force_does_not_steal_display(self):
-        """/whalechan sync 只同步文本，不抢「用哪个人设」的开关。"""
-        self.bootstrap()
-        writer = _fake_writer_factory(self.config)
-        writer(self.config, "display.personality", "kawaii")
-        writer(self.config, "agent.personalities.whalechan", None)
-        result = self.bootstrap(force=True)
-        self.assertIn(result["action"], {"installed", "updated"})
-        config = self.read_config()
-        self.assertEqual(config["display"]["personality"], "kawaii")
-        self.assertEqual(config["agent"]["personalities"]["whalechan"],
-                         persona.compose(self.persona_dir))
-        self.assertIn("没动 display.personality", result["message"])
-
-    def test_structured_persona_is_never_overwritten(self):
-        # 手写的结构化人设（dict）不能被纯文本顶掉，force 也不行
-        self.config.write_text(yaml.safe_dump(
-            {"agent": {"personalities": {"whalechan": {"text": "别人写的结构"}}},
-             "display": {"personality": "whalechan"}}, allow_unicode=True), encoding="utf-8")
-        result = self.bootstrap(force=True)
-        self.assertEqual(result["action"], "failed")
-        self.assertIn("结构化", result["message"])
-        self.assertEqual(self.read_config()["agent"]["personalities"]["whalechan"],
-                         {"text": "别人写的结构"})
+        self.assertEqual(after["soul_chars"], len(persona.compose(self.persona_dir).strip()))
+        self.assertFalse(after["legacy"])
 
 
 if __name__ == "__main__":

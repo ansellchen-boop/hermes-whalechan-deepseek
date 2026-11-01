@@ -4,13 +4,15 @@
 > 想看当前进度去 `PROGRESS.md`。
 > **什么时候写这里**：改了对外行为、换了实现路线、否决过一个看起来更简单的方案 —— 三者任一即写。
 > 不写：纯重构、改名、格式化。
-> 最后更新：2026-10-31
+> 最后更新：2026-11-01
 
 格式：日期 / 决策 / 原因 / 否决了什么 / 由此带来的约束。原因和否决方案是这两栏的价值所在，别省。
 
 ---
 
 ## 2026-10-29 人设住 `agent.personalities.whalechan`，不用插件系统提示段
+
+> **已被取代**（2026-11-01）：人设迁到 `~/.hermes/SOUL.md`，见下面那条。这条留档是因为「为什么不塞进插件系统提示段」的推理仍然成立。
 
 - **原因**：`register_system_prompt_section` 只允许 `after_memory` 位置（`hermes_cli/plugins_dispatch.py:98`），渲染顺序是 `skills → memory → 插件段落 → profile → 时间戳 → 环境提示`，**不在末尾**；单节上限 4000 字（人设当时 3471 字），docstring 明确写「会话级冻结」。而 `personalities.<name>` 是 API 调用时拼在 system prompt 最末尾（`agent/turn_context.py:1354-1356`）。
 - **否决**：用插件 `register_system_prompt_section` 加人设；用 `pre_llm_call` 返回 `{"context": ...}` 改行为（那拼进的是 **user message**，`agent/turn_context.py:803-805`）。
@@ -75,3 +77,9 @@
 - **原因**：我写「判据 = `apply.py --check` ✓」，而 `make check` 的真实输出里**没有 `apply.py` 字样**（那一行叫 `✓ 已是最新`）；又写「闸门 9/9」，实际输出是 `9/9 通过`。照字面 grep 判绿，永远判红。这种错比结论写错更阴 —— 它长得最像「有据可查」。
 - **否决**：写「测试通过、闸门通过、人设一致」这类概念性描述（人读了懂，脚本判不了，等于没判据）。
 - **约束**：判据一律抄命令的原始输出行，判据里出现的每个字符串都要能在终端里 `grep` 到。测试条数不写死（写 `OK`/0 失败），因为加删测试后条数会变。
+
+## 2026-11-01 人设从 `agent.personalities.whalechan` 迁到 `~/.hermes/SOUL.md`，结构规矩另加节奏骰
+
+- **原因**：`personalities.*` 是「选中哪个人设」的机制，文本拼在 system prompt 最末尾；cron 定时任务、多数子代理根本拿不到它。`SOUL.md` 走 identity slot（system prompt 第一段），`cron/scheduler.py` 显式 `load_soul_identity=True`，同一个进程里所有对话都带——覆盖面从「某一个会话」扩到「全部」。代价是位置从最末变成最前，离当前用户消息最远，长会话后半段会稀释。这跟 10-31 那条是同一个病换了地方发作（提示词位置永远输给离得近的东西），所以把「报进度 / 收尾三段小结」这类**结构性**规矩挪进宿主第三条骰子（`rhythm`，默认 85%，会话开头必中），`SOUL.md` 只留措辞和为什么。
+- **否决**：① 继续留在 `personalities.whalechan`（cron 和子代理不带，覆盖面是硬伤）；② 塞进插件 `register_system_prompt_section`（位置只允许 `after_memory`、单节 4000 字、会话级冻结，见 10-29 那条）；③ 把结构规矩也写进 SOUL、只靠措辞硬压（位置在第一段，压不住）；④ 用 `pre_llm_call` 返回 `{"context": ...}` 改 system prompt（那条拼进的是 user message，`agent/turn_context.py:803-805`）。
+- **约束**：**人设只能住 `~/.hermes/SOUL.md`**，禁止再写回 `agent.personalities.*`（两份会和 SOUL 打架）；手改 `SOUL.md` 会被判 `drift`，要强制同步跑 `/whalechan sync`；`SOUL.md` 里是别人的内容时**拒绝覆盖，`sync` 也不覆盖**（有单测锁着）；三条骰子（表情包 / 节拍 / 节奏）必须独立，捆一起调一个必歪另两个；判人设同步用 `python3 apply.py --check`。

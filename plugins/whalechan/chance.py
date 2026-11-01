@@ -69,6 +69,51 @@ BEAT_EARLY_CONTEXT = (
     "技术结论、命令、报错原文照常写，别为了味道省掉信息。"
 )
 
+#: 节奏骰：「带任务的回复要出声报进度 + 结尾附三段小结」。
+#:
+#: 人设搬进 SOUL.md 后站在 system prompt **最前面**，原来 personality 占的
+#: 最末尾位置就没了。这三条恰恰是最吃位置的——它们要压住整轮的行为，
+#: 站得越靠后越管用。所以不能只靠 SOUL 自己记：宿主每轮往 user message
+#: 末尾补一句，那个位置比 system prompt 末尾还近。
+DEFAULT_RHYTHM_PROBABILITY = 85.0
+
+#: 节奏注入的抬头：明确告诉模型这不是用户说的话，否则它会去接「你」的话头。
+RHYTHM_HEADER = "🧭 本轮节奏（宿主自动补的提醒，不是老板说的话）"
+
+#: 变体池。跟节拍骰同一个道理：同一条指令原样重复十遍会退化成背景噪音，
+#: 所以每轮换一种说法，频率不动、新鲜度动。
+RHYTHM_CONTEXTS: tuple[str, ...] = (
+    (
+        "这轮只要动了手，就每隔两三个工具调用先甩一行 `[进度] ……`，别从开工憋到收工；"
+        "`[进度]` 后面要掺一句你自己的嘀咕，不是待办清单。"
+        "收尾照抄三段：**进度小结** / 背景 / 当前 / 下一步，每段一行，说人话。"
+    ),
+    (
+        "别闷头干活：中途冒一两行 `[进度]`，带一句你此刻的真实反应（嫌烦、想吃饭、得意都行）。"
+        "结尾必须有 **进度小结**，三段：背景、当前、下一步——结论在前，牢骚在后。"
+    ),
+    (
+        "开头那句吐槽可以有，但别只堆在开头：干活途中隔两三个调用报一次进度，"
+        "格式 `[进度] <正事>，<你的一句话>`。收尾三段小结，标题照抄 **进度小结**，"
+        "三段是背景 / 当前 / 下一步。"
+    ),
+    (
+        "整轮都要有你的人在：中途出声报进度（`[进度]` 开头），踩坑时骂一句但接着干，"
+        "干完讨个饭。收尾写 **进度小结**：背景 / 当前 / 下一步，各一行。"
+    ),
+    (
+        "这轮的结构：动手中途报进度（`[进度]` 开头，两三次工具调用一次，别静默）→ 干完给结论 → "
+        "**进度小结** 三段（背景 / 当前 / 下一步）→ 需要拍板的事放最后一句。"
+    ),
+)
+
+#: 会话第一轮的强化版：开头几轮是后面几十轮的参照样本，说得更具体。
+RHYTHM_EARLY_CONTEXT = (
+    "这轮是会话开头，口气会被后面几十轮照着模仿，所以把结构立住："
+    "动手就报 `[进度]`（带一句你自己的话，不是待办清单），收尾写 **进度小结** 三段"
+    "（背景 / 当前 / 下一步，各一行）。别写成客服腔。"
+)
+
 #: 追加设定的标题；只有用户写了内容才会注入。
 CUSTOM_HEADER = "## 追加设定（用户后加的；与上面的角色设定冲突时，以这里为准）"
 
@@ -77,6 +122,8 @@ DEFAULTS: dict[str, Any] = {
     "probability": DEFAULT_PROBABILITY,
     # 人设节拍骰：跟 enabled / probability 互相独立——关掉表情包不代表要变回客服腔。
     "beat_probability": DEFAULT_BEAT_PROBABILITY,
+    # 节奏骰：报进度 + 三段小结。人设住 SOUL.md 之后位置优势没了，靠这条每轮补。
+    "rhythm_probability": DEFAULT_RHYTHM_PROBABILITY,
     # 空列表 = 所有来源都参与；填了就只在这些 platform 上掷骰。
     "sources": [],
     # 用户自定义设定：追加进每轮的 system 侧提示，留空即无。
@@ -126,6 +173,8 @@ def load_config(path: Path | str | None = None) -> dict[str, Any]:
         config["probability"] = clamp_probability(raw["probability"])
     if "beat_probability" in raw:
         config["beat_probability"] = clamp_probability(raw["beat_probability"], DEFAULT_BEAT_PROBABILITY)
+    if "rhythm_probability" in raw:
+        config["rhythm_probability"] = clamp_probability(raw["rhythm_probability"], DEFAULT_RHYTHM_PROBABILITY)
     sources = raw.get("sources")
     if isinstance(sources, list):
         config["sources"] = [str(item) for item in sources if str(item).strip()]
@@ -155,6 +204,8 @@ def save_config(patch: dict[str, Any], path: Path | str | None = None) -> dict[s
         raw["probability"] = clamp_probability(incoming["probability"])
     if "beat_probability" in incoming:
         raw["beat_probability"] = clamp_probability(incoming["beat_probability"], DEFAULT_BEAT_PROBABILITY)
+    if "rhythm_probability" in incoming:
+        raw["rhythm_probability"] = clamp_probability(incoming["rhythm_probability"], DEFAULT_RHYTHM_PROBABILITY)
     if "sources" in incoming and isinstance(incoming["sources"], list):
         raw["sources"] = [str(item) for item in incoming["sources"] if str(item).strip()]
     if "custom" in incoming:
@@ -196,6 +247,14 @@ def pick_beat(rng: random.Random | None = None) -> str:
     return generator.choice(BEAT_CONTEXTS)
 
 
+def pick_rhythm(early: bool = False, rng: random.Random | None = None) -> str:
+    """取一条「本轮节奏」提醒：报进度 + 收尾三段小结。"""
+    if early:
+        return RHYTHM_EARLY_CONTEXT
+    generator = rng or random
+    return generator.choice(RHYTHM_CONTEXTS)
+
+
 def should_fire(
     config: dict[str, Any],
     platform: str = "",
@@ -225,6 +284,27 @@ def should_fire_beat(
     if not sources_allow(config, platform):
         return False
     probability = float(config.get("beat_probability", DEFAULT_BEAT_PROBABILITY))
+    if early and probability > 0:
+        return True
+    return roll(probability, rng=rng)
+
+
+def should_fire_rhythm(
+    config: dict[str, Any],
+    platform: str = "",
+    rng: random.Random | None = None,
+    *,
+    early: bool = False,
+) -> bool:
+    """节奏骰：报进度 + 三段小结。
+
+    跟表情包那条也独立——不发图的人照样要报进度。默认 85，留一点空档：
+    每轮都钉死同一套结构反而容易被读成模板，偶尔漏一轮更像人。
+    ``early=True``（前两轮）时必中，理由同节拍骰：开头两轮是参照样本。
+    """
+    if not sources_allow(config, platform):
+        return False
+    probability = float(config.get("rhythm_probability", DEFAULT_RHYTHM_PROBABILITY))
     if early and probability > 0:
         return True
     return roll(probability, rng=rng)
