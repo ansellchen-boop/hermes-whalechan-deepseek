@@ -69,9 +69,14 @@ systemd-run --user --on-active=60 --unit=<名字> --collect /bin/bash <脚本>
 `plugins/whalechan/config.json`（概率、custom）已 gitignore；模板是 `config.example.json`。
 新增本机私有文件时一律进 `.git/info/exclude`，**别改 `.gitignore`**（那会进仓库）。
 
-## 11. 改完人设别急着说「生效了」，也别急着重启
+## 11. 改完人设要说「新会话生效」，不是「下一条消息生效」
 
-SOUL.md 走 identity slot，**每次 API 调用重新读**：`apply.py` 跑完，网关下一条消息就带，桌面会话也不用新会话——判据是日志里那行 `whalechan: 人设 already（N 字）` 的 N 变了。
+系统提示**按会话缓存**（`agent/system_prompt.py:804-807`：只在 `agent._cached_system_prompt is None`
+时构建，压缩后才重建），`turn_context.py:1141-1144` 也是这个口径。所以改完 SOUL.md，
+**要新会话**才看得到新的人设。
+
+容易踩的假证据：日志里每轮都打 `whalechan: 人设 already（N 字）`——那只是 `pre_llm_call` 钩子
+跑了（钩子确实每轮跑），不代表 system prompt 重拼过。别拿它证明「已经生效」。
 
 真正需要重启的只有**插件代码**（`chance.py` / `persona.py` / `__init__.py`）的改动，见 §2。两者分开，别一改人设就重启。
 

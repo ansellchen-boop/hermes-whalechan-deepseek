@@ -8,7 +8,7 @@ Hermes 的插件接口上：
   往这一轮的 user message **末尾**追加一行提示（宿主是 ``content + "\n\n" + injection``，
   不是插在前面），人设据此决定发不发。
 
-人设本身住 ``~/.hermes/SOUL.md``（system prompt 的 identity slot，cron 和子代理都带），
+人设本身住 ``~/.hermes/SOUL.md``（system prompt 的 identity slot，cron 带、子代理不带），
 文本来自插件自带的 ``persona/`` 三段：首次加载时 ``persona.bootstrap()`` 合成并写进去，
 同时清掉 config 里的旧载体 ``agent.personalities.whalechan``；之后改人设用 ``/whalechan sync``。
 为什么不能塞进 ``register_system_prompt_section``（位置只允许 after_memory、4000 字上限、
@@ -243,19 +243,42 @@ _TERMINATORS = "\\s`\"'*,.;_:)\\]}\\[（）、：，。；！？、“”‘’�
 #: ``base.py`` 要求扩展名后面紧跟空白或标点，紧跟一个汉字就整条不匹配 —— 图发不出去，
 #: 路径还当普通文字留在回复里。人设里写了两遍「前后各空一行」也没用（2026-11-01 实测
 #: 三次全粘），所以在输出侧兜一次：粘上了就补换行，本来没粘的一个字不动。
+#:
+#: 右边界除了「粘上了」，还要求下一字符不是 ASCII 字母数字下划线：``roll-log.jsonl``
+#: 会被非贪婪匹配成 ``roll-log.json`` + 残留 ``l``，把合法路径拆坏（复审抓到）。
 _GLUED_MEDIA_RE = re.compile(
     r"(?P<head>MEDIA:\s*)"
     r"(?P<path>(?:~/|/|[A-Za-z]:[/\\])[^\s`\"'*]+?\.(?:" + _EXT_ALT + r"))"
-    r"(?=[^" + _TERMINATORS + r"])",
+    r"(?=[^" + _TERMINATORS + r"A-Za-z0-9_])",
     re.IGNORECASE,
 )
 
+#: 代码块和行内代码：里面出现的 ``MEDIA:`` 多半是举例或参数，改它等于毁代码。
+_CODE_SPANS_RE = re.compile(r"(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`)")
+
+
+def _fix_match(match: "re.Match[str]") -> str:
+    return f"{match.group('head')}{match.group('path')}\n\n"
+
 
 def _split_glued_media(text: str) -> str:
-    """把粘在路径后面的字挪到下一段。没粘就原样返回。"""
+    """把粘在路径后面的字挪到下一段。没粘就原样返回，代码区域一律不动。"""
     if "MEDIA:" not in text:
         return text
-    return _GLUED_MEDIA_RE.sub(lambda m: f"{m.group('head')}{m.group('path')}\n\n", text)
+    if "`" in text:
+        return _rebuild_outside_code(text)
+    return _GLUED_MEDIA_RE.sub(_fix_match, text)
+
+
+def _rebuild_outside_code(original: str) -> str:
+    """只修代码片段之外的正文；代码块和行内代码原样保留。"""
+    out, cursor = [], 0
+    for match in _CODE_SPANS_RE.finditer(original):
+        out.append(_GLUED_MEDIA_RE.sub(_fix_match, original[cursor:match.start()]))
+        out.append(match.group(0))
+        cursor = match.end()
+    out.append(_GLUED_MEDIA_RE.sub(_fix_match, original[cursor:]))
+    return "".join(out)
 
 
 def _on_transform_llm_output(**kwargs: Any) -> str | None:

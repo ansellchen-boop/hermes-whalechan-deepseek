@@ -294,7 +294,10 @@ def bootstrap(
             return {"action": "drift", "chars": state["chars"],
                     "message": (f"SOUL.md 里是 {state['chars']} 字，插件这边 {len(text)} 字——"
                                 "不敢自动覆盖（可能手改过），要同步跑 /whalechan sync")}
-        if marker.get("bootstrap") == "done":
+        # 只有新版 marker（带 carrier=soul）才代表「人设已经住进 SOUL.md，用户后来删了」。
+        # 0.4.x 的 marker 只有 bootstrap/chars/at，那时人设还住 config，把它当成
+        # 「删过」会让升级过来的机器永远装不上（2026-11-01 复审抓到）。
+        if marker.get("bootstrap") == "done" and marker.get("carrier") == "soul":
             return {"action": "removed-by-user", "chars": 0,
                     "message": "SOUL.md 里的人设被你移除过，不自动装回；要恢复跑 /whalechan sync"}
 

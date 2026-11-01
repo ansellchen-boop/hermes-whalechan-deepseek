@@ -93,6 +93,29 @@ class SplitGluedMediaTest(unittest.TestCase):
         once = whalechan._split_glued_media(text)
         self.assertEqual(whalechan._split_glued_media(once), once)
 
+    def test_longer_extension_is_not_truncated(self):
+        # 非贪婪匹配会把 roll-log.jsonl 认成 roll-log.json，残留一个 l 粘在下一行，
+        # 合法路径被拆坏（复审抓到）。
+        for path in ("/home/ubuntu/.hermes/logs/roll-log.jsonl",
+                     "/tmp/a.json5", "/tmp/a.png2", "/tmp/a.webpx"):
+            text = f"MEDIA:{path}后面还有字"
+            self.assertEqual(whalechan._split_glued_media(text), text, path)
+
+    def test_code_block_is_untouched(self):
+        text = '示例：\n\n```python\nprint("MEDIA:/tmp/a.webp进度")\n```\n\n就这样。'
+        self.assertEqual(whalechan._split_glued_media(text), text)
+
+    def test_inline_code_is_untouched(self):
+        text = "命令里写 `MEDIA:/tmp/a.webp进度` 就是错的格式"
+        self.assertEqual(whalechan._split_glued_media(text), text)
+
+    def test_body_is_fixed_while_code_block_survives(self):
+        text = (f"MEDIA:{IMG}/a.webp进度小结\n\n"
+                "```\nMEDIA:/tmp/b.webp示例\n```\n")
+        fixed = whalechan._split_glued_media(text)
+        self.assertIn(f"MEDIA:{IMG}/a.webp\n\n进度小结", fixed)
+        self.assertIn("```\nMEDIA:/tmp/b.webp示例\n```", fixed)
+
 
 class TransformHookTest(unittest.TestCase):
     def test_returns_none_when_nothing_to_fix(self):

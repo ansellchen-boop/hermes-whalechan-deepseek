@@ -7,7 +7,15 @@
 
 ## 机制层：已实测通过
 
-闸门矩阵 **9/9** 通过（`make probe`；用例：节拍 100/0、表情包 100/0、两者组合、`enabled=false` 下节拍仍活、`sources` 过滤、子代理豁免、custom 注入、roll-log 落盘）。节奏骰没有独立的探针用例，靠 `roll-log` 的 `rhythm` 字段 + `tests/test_chance.py` 的 `RhythmTest` / `RhythmVariantTest`（11 个）覆盖。输出侧 MEDIA 钩子由 `tests/test_media_hook.py` 的 19 个用例覆盖（`SplitGluedMediaTest` 14 / `TransformHookTest` 4 / `RegisterTest` 1）。
+闸门矩阵 **9/9** 通过（`make probe`；用例：节拍 100/0、表情包 100/0、两者组合、`enabled=false` 下节拍仍活、`sources` 过滤、子代理豁免、custom 注入、roll-log 落盘）。节奏骰没有独立的探针用例，靠 `roll-log` 的 `rhythm` 字段 + `tests/test_chance.py` 的 `RhythmTest` / `RhythmVariantTest`（11 个）覆盖。输出侧 MEDIA 钩子由 `tests/test_media_hook.py` 的 23 个用例覆盖（`SplitGluedMediaTest` 18 / `TransformHookTest` 4 / `RegisterTest` 1）。
+
+2026-11-01 第五轮改动（外部复审后加固），单测 **74 个全绿**（69 → 74）：
+
+- 旧版 marker（0.4.x 写的，没有 `carrier` 字段）不再被误判成「用户删过人设」——否则从 0.4 升级上来的机器永远装不上；
+- `apply.py` 改走 `persona.bootstrap(force=True)`：别人的 SOUL.md 现在判 `refused`（exit 3，什么都不动），也不再顺手清掉别人的 `display.personality` 和手写的结构化人设；
+- MEDIA 钩子加右边界（`roll-log.jsonl` 不会再被拆成 `roll-log.json` + 残留 `l`），并跳过代码块 / 行内代码；
+- 「SOUL.md 每轮重读」的说法是错的，实际是**每会话拼一次**（`agent/system_prompt.py:804-807`）、子代理 `skip_soul=True` 不带（`tools/delegate_tool_progress.py:208`）；文档全线更正；
+- `plugin.yaml` 升到 `0.5.2`。
 
 2026-11-01 第四轮改动已落地，单测 **69 个全绿**（50 → 69）：
 
@@ -59,7 +67,7 @@
 
 ## 这些数字从哪来
 
-2026-10-31 补齐五子系统（`pyproject.toml` / `.python-version` / `Makefile` / `PROGRESS.md` / `scripts/probe_gates.py`）后，**`make check` 是唯一验收入口**：上面说的 69 个单测、9/9 闸门都在它里面，别再引用某次手跑的零散输出。
+2026-10-31 补齐五子系统（`pyproject.toml` / `.python-version` / `Makefile` / `PROGRESS.md` / `scripts/probe_gates.py`）后，**`make check` 是唯一验收入口**：上面说的 74 个单测、9/9 闸门都在它里面，别再引用某次手跑的零散输出。
 
 改动如果动了 `chance.py` 的常量，`make test` 会第一时间红——那些数字是锚，不是估计。
 

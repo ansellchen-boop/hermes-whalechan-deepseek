@@ -17,7 +17,8 @@
     python3 apply.py --dry-run    # 说清楚要改什么，不落盘
     python3 apply.py --revert     # 回滚到最近一次备份
 
-SOUL.md 走 identity slot，**每次 API 调用都会重新拼**，所以网关下一条消息就生效；
+SOUL.md 走 identity slot，但系统的 system prompt 是**按会话缓存**的（只在首次构建、
+压缩后重建），所以跑完 `apply.py` 要**新会话**才看得到；
 桌面 / TUI 要新会话。旧内容会被备份成 `SOUL.md.bak-<时间戳>`。
 """
 
@@ -47,9 +48,6 @@ PERSONA = PLUGIN_SRC / "persona"
 
 PLUGIN_FILES = ("__init__.py", "chance.py", "persona.py", "stickers.py", "plugin.yaml")
 
-#: 人设搬进 SOUL.md 之后要清掉的旧键（留着就是两份人设打对台）。
-LEGACY_KEYS = ("agent.personalities.whalechan", "personalities.whalechan", "display.personality")
-
 
 # ---------------------------------------------------------------- persona 合成
 
@@ -66,12 +64,18 @@ def compose_persona() -> str:
     return plugin_persona.compose(PERSONA)
 
 
-def install_soul(text: str) -> None:
-    """写 SOUL.md：复用插件里那份写函数，保证和「插件自举」是同一条路。"""
+def install_soul() -> dict:
+    """写 SOUL.md：走插件的 ``bootstrap(force=True)``，不自己动手。
+
+    直接调 ``write_soul()`` 会跳过 bootstrap 的保护：SOUL.md 里是别人写的内容时
+    照样被覆盖，config 里手写的结构化人设和别人的 ``display.personality`` 也会被
+    一并清掉（2026-11-01 复审抓到的两个缺陷）。bootstrap 自己判断该不该动、
+    只清纯文本形态的旧键、并写 marker。
+    """
     sys.path.insert(0, str(PLUGIN_SRC))
     import persona as plugin_persona  # noqa: PLC0415
 
-    plugin_persona.write_soul(text)
+    return plugin_persona.bootstrap(force=True, config_path=CONFIG, root=PERSONA)
 
 
 # ---------------------------------------------------------------- config 读写
@@ -168,7 +172,7 @@ def revert() -> int:
     if _dig(_load_yaml(), "personalities.whalechan") is not None:
         _write_key("personalities.whalechan", None)
     print(f"已回滚到 {meta.name}")
-    print("提示：网关下一条消息生效；桌面 / TUI 要新会话。")
+    print("提示：要新会话才看得到（系统提示按会话缓存）；插件代码改动则要重启进程。")
     return 0
 
 
@@ -264,12 +268,11 @@ def main() -> int:
 
     meta = backup()
     print(f"备份: {meta}")
-    install_soul(persona)
-    # 人设只住 SOUL.md 一处：旧载体全部清掉，否则同一份人设注入两遍、
-    # 且 personality 那份会盖在 SOUL 后面抢话。
-    for key in LEGACY_KEYS:
-        if _dig(_load_yaml(), key) is not None:
-            _write_key(key, None)
+    result = install_soul()
+    if result.get("action") == "refused":
+        print(f"✗ {result.get('message')}")
+        print("  （SOUL.md 没动、config 没动、插件也没换；要装鲸鱼娘先把 SOUL.md 挪走再跑）")
+        return 3
     install_plugin()
 
     state = current_state()
@@ -277,7 +280,7 @@ def main() -> int:
     legacy_left = bool(state["legacy_persona"]) or state["personality"] == "whalechan"
     ok = state["soul"].strip() == persona.strip() and not legacy_left and not drift
     print("✓ 写入并回读验证通过" if ok else "✗ 回读不一致，检查 SOUL.md / config.yaml")
-    print("生效方式：网关下一条消息起；桌面 / TUI 需要新会话。")
+    print("生效方式：新会话（系统提示按会话缓存）；插件代码改动才需要重启承载进程。")
     return 0 if ok else 1
 
 

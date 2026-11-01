@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -130,6 +131,22 @@ class BootstrapTest(Sandbox):
         result = self.bootstrap()
         self.assertEqual(result["action"], "removed-by-user")
         self.assertEqual(self.read_soul(), "")
+
+    def test_legacy_marker_without_carrier_does_not_block_migration(self):
+        """0.4.x 的 marker 没有 ``carrier`` 字段——那时人设还住 config。
+
+        把它当成「用户删过」会让从 0.4 升级过来的机器永远装不上（复审抓到）：
+        SOUL 空着、旧键还在、插件一句话不说。
+        """
+        marker_dir = self.home / "plugins" / "whalechan"
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        (marker_dir / "persona-state.json").write_text(
+            json.dumps({"bootstrap": "done", "chars": 3472, "at": 1793208774}),
+            encoding="utf-8",
+        )
+        result = self.bootstrap()
+        self.assertEqual(result["action"], "installed")
+        self.assertEqual(self.read_soul(), persona.compose(self.persona_dir))
 
     def test_force_restores_after_removal(self):
         self.bootstrap()

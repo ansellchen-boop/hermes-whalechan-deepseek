@@ -46,8 +46,10 @@ python3 apply.py --revert   # 回滚到最近一次备份
 | 你清空过 | `removed-by-user`，不装回来；要恢复跑 `/whalechan sync` |
 | 别人的内容（既非出厂、也不含「鲸鱼娘」） | `refused`，**`sync` 也不覆盖** |
 
-生效时机：SOUL.md 走身份层、每次 API 调用重拼，网关下一条消息就带；
-桌面 / TUI 要新会话。插件代码改动要重启承载进程。
+生效时机：系统提示是**按会话缓存**的（`agent/system_prompt.py:804-807` 只在
+`agent._cached_system_prompt is None` 时构建、压缩后重建），所以改完 SOUL.md 要**新会话**才看得到；
+日志里那行 `whalechan: 人设 already（N 字）` 每轮都会打，但它只证明 `pre_llm_call` 钩子跑过，
+不代表 system prompt 重拼了。插件代码改动要重启承载进程。
 
 ---
 
@@ -57,8 +59,8 @@ python3 apply.py --revert   # 回滚到最近一次备份
 | --- | --- | --- |
 | 注入位置 | system prompt **最末尾**（`agent/turn_context.py`：`effective_system = effective_system + "\n\n" + ephemeral_system_prompt`） | identity slot，**第一段** |
 | cron / 定时任务 | 不传 | `cron/scheduler.py` 显式 `load_soul_identity=True`，带 |
-| 子代理 | 多数不传 | 走同一条 `build_system_prompt`，带 |
-| 刷新 | 每次 API 调用重拼 | 每次 API 调用重拼 |
+| 子代理 | 不传 | **也不传**：`tools/delegate_tool_progress.py:208` 显式 `skip_soul=True`（身份归父会话） |
+| 刷新 | 每次 API 调用重拼（ephemeral） | 每**会话**拼一次，压缩后才重建 |
 
 搬过去换来的是**覆盖面**：人设不再只影响某一个会话类型，整个进程内所有对话都带。
 代价是**位置**：人设在最前面，离当前用户消息最远，长会话后半段容易稀释。

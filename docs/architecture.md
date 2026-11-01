@@ -17,8 +17,9 @@ config 里**不再有任何** `personalities.whalechan` / `display.personality`�
 |---|---|---|
 | 注入位置 | `ephemeral_system_prompt`，system prompt **最末尾** | identity slot，system prompt **第一段** |
 | cron / 定时任务 | 不传 | `cron/scheduler.py` 显式 `load_soul_identity=True`，带 |
-| 子代理 / 后台 | 多数不传 | 走同一条 `build_system_prompt`，带 |
-| 覆盖范围 | 只影响选中的那个会话类型 | 整个 Hermes 进程内所有对话 |
+| 子代理 / 后台 | 不传 | **也不传**：`tools/delegate_tool_progress.py:208` 显式 `skip_soul=True`（身份归父会话） |
+| 刷新 | 每次调用重拼 | 每**会话**拼一次，压缩后重建 |
+| 覆盖范围 | 只影响选中的那个会话类型 | 整个 Hermes 进程内所有对话（cron 也算） |
 
 代价是**位置变了**：人设现在在 system prompt 开头，离当前用户消息最远，
 长会话里后半段那些「报进度 / 三段小结」的硬规矩容易被稀释。
@@ -80,6 +81,6 @@ config 里**不再有任何** `personalities.whalechan` / `display.personality`�
 
 ## 生效方式
 
-- **SOUL.md 改动**：网关下一条消息起生效（每次调用重拼）；桌面 / TUI 要新会话
+- **SOUL.md 改动**：要**新会话**才生效（系统提示按会话缓存、压缩后重建），不是「网关下一条消息」
 - **插件代码改动**：重启承载进程 —— 桌面 `systemctl --user restart hermes-dashboard`，网关 `hermes-gateway`
 - **概率改动**：`/whalechan 80` 立即生效，不用重启
