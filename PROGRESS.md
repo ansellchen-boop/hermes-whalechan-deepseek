@@ -30,7 +30,7 @@
 
 ## 待办
 
-1. **push**：本地 `ahead 4`（`5acb3e1` / `655a3e6` / `6d21eb3` / 本轮这笔），老板说先不推，等他说。推之前 `git diff origin/main..HEAD --name-only | grep persona/user.md` 必须为空（`user.md` 已 `git rm --cached` 停追、`.gitignore` 挡着，这条 grep 是第二道保险）。
+1. **push**：本地有若干提交没推（具体数字看 `git status -sb` 的 `ahead N`，别信这里写死的数），老板说先不推，等他说。推之前 `git diff origin/main..HEAD --name-only | grep persona/user.md` 必须为空（`user.md` 已 `git rm --cached` 停追、`.gitignore` 挡着，这条 grep 是第二道保险）。
 2. **复测衰减**：新措辞 2026-11-01 23:10 起生效，现在 `make drift` 的数据全是旧措辞的。攒够新措辞的回合（建议 ≥100 回合、且含 ≥10 个 11 轮以上的会话）再跑，只看 11-20 / 21+ 两段的「内心」列。
 3. **drift 的 `INNER` 口径要不要放宽到「括号含动作词」**：放宽能抓到「（把锅端起来）」这类，但历史数字会不可比。**待老板拍板**，没动。
 4. **桌面长会话口吻**：只在 oneshot 上验过两轮，≥11 轮的桌面会话还没实测。

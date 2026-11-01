@@ -98,3 +98,15 @@ systemd-run --user --on-active=60 --unit=<名字> --collect /bin/bash <脚本>
 - 终止符要收 ASCII `.`，否则 `MEDIA:/x.webp. See above` 这种英文收尾会被拆成两段。收进来的代价是 `…webp.算了` 不修，但比打断英文句子划算。
 
 **验证判据**：让模型「原样输出」一个粘连的 MEDIA 行，然后查会话库 `messages.content`，看是不是 `…webp\n\n进度小结`。只看 CLI 回显不算——TUI 的 markdown 渲染会把单换行合并，看起来永远像粘着。
+
+## 14. `.git/info/exclude` 挡不住已追踪文件；`skip-worktree` 文件删不掉
+
+**症状一**：以为 `persona/user.md` 被 exclude「挡住了、永不入库」，实际 `git ls-files` 里明明白白有它、`git ls-tree origin/main` 也有——`exclude` / `.gitignore` 只对**未追踪**文件生效，文件一旦进过索引就再也拦不住。
+
+**症状二**：`git rm --cached plugins/whalechan/persona/user.md` 被拒，报 `matched paths that exist outside of your sparse-checkout definition`，可 `git config --list | grep sparse` 一个都没有。
+
+**为什么**：`git update-index --skip-worktree` 设的 `S` 位（`git ls-files -v` 可见）在 git 内部就是 sparse-checkout 的实现机制，2.43 的 `git rm --cached` 看到这个位就当成「这路径在我工作区之外」拒绝动它。
+
+**正确做法**：先 `git update-index --no-skip-worktree <path>` 清位，再 `git rm --cached <path>`；停追后补 `.gitignore`（`.git/info/exclude` 也留一份双保险），最后用 `git add -A --dry-run` 验证它不会被带回来。检查「停追有没有真生效」看 `git ls-tree -r HEAD --name-only | grep user.md` 应为空，别只看 `git status`（工作区文件还在，status 里啥也不显示）。
+
+**顺带**：本仓的 `docs/` 四篇（architecture / pitfalls / state / verify）**一直在库里**，`AGENTS.md` 里那句「docs/ 只落本地、不进 GitHub」同样是假话——只有仓库根的 `AGENTS.md` 真被 exclude 了。改这类说法前先 `git ls-files <dir>` 核一遍，别信文档自称。
