@@ -7,13 +7,14 @@
 PY       ?= python3
 VENV_PY  := $(HOME)/.hermes/hermes-agent/venv/bin/python
 
-.PHONY: help check test syntax apply-check audit drift probe exit-check lint typecheck
+.PHONY: help check test syntax apply apply-check audit drift probe exit-check lint typecheck
 
 help:
 	@echo "make check       全套验证 = syntax + test + apply-check + probe（默认该跑的）"
 	@echo "make test        单元测试（纯逻辑，不走网络）"
 	@echo "make syntax      语法编译检查（compileall）"
 	@echo "make apply-check 仓库 vs 已安装的人设/插件是否一致（只读）"
+	@echo "make apply       部署：把人设写进 SOUL.md 并装插件（会改配置）"
 	@echo "make exit-check  会话退出第四条件：临时工件扫描（只读）"
 	@echo "make audit       指令审计：三处 AGENTS.md 的尺寸/三件/死链/陈旧度（不阻塞 check）"
 	@echo "make drift       人设漂移曲线 + 节拍骰 A/B（读 state.db 和 roll-log）"
@@ -33,6 +34,11 @@ test:
 apply-check:
 	@test -x $(VENV_PY) || { echo "找不到 Hermes venv: $(VENV_PY)"; exit 1; }
 	@$(VENV_PY) apply.py --check
+
+# 部署：把仓库里的 persona/ 写进 ~/.hermes/SOUL.md 并装插件。会改配置，所以不进 check。
+apply:
+	@test -x $(VENV_PY) || { echo "找不到 Hermes venv: $(VENV_PY)"; exit 1; }
+	@$(VENV_PY) apply.py
 
 exit-check:
 	@bash scripts/check-session-exit.sh

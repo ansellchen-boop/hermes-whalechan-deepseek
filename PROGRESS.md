@@ -1,47 +1,45 @@
 # 进度
 
-**最后验证**：2026-11-01 14:16 CST —— `make check` → `✓ syntax` / `Ran 74 tests OK` / `apply.py --check` ✓（人设 4137 = 4137）/ `probe` 9/9 / `✓ 无临时工件` → `✓ 全部通过`。
+**最后验证**：2026-11-01 23:12 CST —— `make check` → `✓ syntax` / `Ran 74 tests OK` / `apply-check` 人设 4513 = 4513 / `probe` 9/9 / `✓ 无临时工件` → `✓ 全部通过`。
 
 ## 当前状态
 
-**0.5.2：人设住 SOUL.md，输出侧钩子修 MEDIA 行，外部复审抓到的四个缺陷已修。**
+**0.5.3：长会话「内心戏」衰减对症（只改措辞），`make apply` 补成真实 target。本地已提交未推送。**
 
-- `~/.hermes/SOUL.md` = **4137 字符**（strip 口径）；prefix 2572 + user 98 + suffix 3447，差值两个拼接符
-- `grep -n personality ~/.hermes/config.yaml` → **无输出**（旧载体全清）
-- 备份：`~/.hermes/backups/whalechan/state-20261101-141552.json` + 同名 `plugin-*.tar.gz`（含旧 SOUL.md）
-- 三条独立骰：表情包 66.6% / 人设节拍 70%（用户自己调的）/ 节奏 85%（会话前两轮必中）
-- 两个钩子：`pre_llm_call`（三条骰）+ `transform_llm_output`（MEDIA 粘连兜底，跳过代码块）
-- 已提交两笔：`6d21eb3`（人设迁 SOUL）+ `655a3e6`（0.5.1 输出钩子）；**本轮加固还没提交**
+- `~/.hermes/SOUL.md` = **4513 字符**（strip 口径）；`persona/suffix.md` 3782 → 4756 字节
+- 三条骰：表情包 66.6% / 人设节拍 70%（用户自己调的）/ 节奏 85%（会话前两轮必中）
+- 运行时实测（最近 60 条 `roll-log`）：63.3% / 75.0% / 86.7%，与设定吻合
+- `git status`：`main...origin/main [ahead 4]`；老板明确说**先不推**
+- 测试壳会话 `local-6403bb0d` / `local-bc0951ca` / `local-2d9fd7f7` / `local-81cf37a1` 已删（确认过都是 11-01 13:46–13:59 的 oneshot 验证，无用户内容），删后回读 `sessions=0 / messages=0`
+- 磁盘备份：`~/.hermes/backups/whalechan/state-20261101-230754.json`（含改前 SOUL）
 
-## 已完成（第五轮：复审后加固）
+## 已完成（第六轮：长会话衰减对症）
 
-- `persona.py` marker 判定加 `carrier == "soul"`：0.4.x 的旧 marker 不再被当成「用户删过人设」。本机 `~/.hermes/plugins/whalechan/persona-state.json` 正好是旧格式（`chars: 3472`，10-29 写的），升级路径曾经是死的
-- `apply.py` 的 `install_soul()` 改走 `persona.bootstrap(force=True)`：别人的 SOUL 判 `refused`（exit 3、什么都不动），不再清别人的 `display.personality`、不再删手写的结构化人设；`LEGACY_KEYS` 常量随之删掉
-- `__init__.py` 的 `_GLUED_MEDIA_RE` 加右边界 `[^…A-Za-z0-9_]`；新增 `_CODE_SPANS_RE` / `_rebuild_outside_code()`，代码块与行内代码一律不动
-- 文档更正「SOUL.md 每轮重读」这个错说法（`README.md` / `docs/architecture.md` / `docs/pitfalls.md` §11 / `apply.py` 提示语 / 本文件自己）
-- 测试 69 → **74**：`test_media_hook.py` +4（长扩展名、代码块、行内代码、正文+代码共存）、`test_persona.py` +1（旧 marker 迁移）
+1. **先证伪自己**：怀疑 drift 的 `INNER` 正则口径窄、可能把衰减量成假的。探针（`~/.hermes/cache/scratch/probe_inner_metric.py`，393 回合）换三种口径（原正则 / 任意短括号 / 括号含动作词）重算 → **曲线形状一致**，衰减是真的；「任意括号」口径无信息量（技术性括号占大头，≥6 轮的 201 回合里 115 个是假阳性）。
+2. **`suffix.md` 改两处**：第 1 条「出声」的示例行改成 `[进度] 看完配置了（鳍抖了一下），唔，接下来改 suffix（还剩 2 步）`，并明说这就是第 4 条要的悄悄话；第 4 条「悄悄话」加标题前缀「长会话最容易掉」+ 四个子条（位置按 ① `[进度]` 行 ② 第一句正文 ③ 闲聊结尾 / 熟了也不能省 / 写成具体动作 / 发之前自查改成「回第一句改，别在结尾硬补」）。
+3. **`make apply`**：`AGENTS.md` §4 一直让人跑 `make apply`，Makefile 里根本没这个 target（只有 `apply-check`，`make apply` 直接报 `No rule to make target`）。补成真实 target（部署动作，照原设计不进 `check` 链），`help` 加一行。
+4. `plugin.yaml` 0.5.2 → 0.5.3；`docs/state.md` 加第六轮一节（三种口径对照表 + 「别用任意括号口径判断人设」的警告）。
 
 ## 已验证的证据（不是「应该能行」）
 
-1. **节奏骰真的注入了**：重启 gateway 后跑 `hermes chat -q`，`roll-log.jsonl` 每条都带 `"rhythm": true`。
-2. **输出侧钩子真的改写了落库文本**：`MEDIA:…/ee244a0cc5a70ccb.webp进度小结` 在会话库里存成 `…webp\n\n进度小结`（会话 `local-bc0951ca…`，消息 id 13142）。
-3. **桌面端也跑新代码**：dashboard 14:03 重启后，`roll-log` 出现 `platform=desktop` + `"rhythm": true` 的记录（会话 `20261101_131356_4deff9`）。
-4. **apply.py 的三层保护实测过**（临时 `HERMES_HOME` + 软链 `hermes-agent`）：
-   - 别人的 SOUL → `✗ …不敢覆盖` + exit 3，SOUL 和 config 一字未动
-   - 空 SOUL + `display.personality: kawaii` + 结构化人设 → 装上人设，两样都保留
-   - marker 落成 `{"bootstrap":"done","carrier":"soul","chars":4138}`
-5. **SOUL.md 不是每轮重读**（更正）：系统提示按会话缓存（`agent/system_prompt.py:804-807`、`agent/turn_context.py:1141-1144`），压缩后才重建；子代理 `skip_soul=True`（`tools/delegate_tool_progress.py:208`）；只有 cron 是 `load_soul_identity=True`（`cron/scheduler.py:2537`）。
+1. **第一版措辞端到端就失败**：新会话跑「统计 `tests/` 下 `test_` 方法个数」，输出有口癖、有三段小结，**但正文一个括号动作都没有**。改措辞不能靠想象，必须跑。
+2. **第二版端到端通过**：新会话跑「统计插件目录行数」，输出含 `（内心：真要说它是「大文件」，一半是 docstring 和命令文案撑的…）`；reasoning 里自己执行了「自查：有没有至少一处括号动作/内心戏 —— 有」。
+3. **MEDIA 钩子没坏（虚惊）**：CLI 屏幕上看着像 `…webp进度小结` 粘在一起，查会话库 `messages.content` 实际存的是 `…webp\n\n**进度小结**` —— 终端渲染把 `**` 和换行吃了，不是钩子失效。
+4. **删会话后回读**：四个 `local-*` 前缀在 `sessions` 和 `messages` 两张表都是 0 行。
+5. **第五轮的旧证据仍然成立**（`apply.py` 三层保护、SOUL 不是每轮重读、节奏骰注入），只是人设字符数从 4137 变 4513。
 
 ## 待办
 
-1. **桌面端冷启动口吻还没实测。** 判据：新开会话聊五轮，看有没有真报 `[进度]`、真收尾三段。当前会话是老会话（`early: false`），只能算一半。
-2. 本轮改动要提交（`__init__.py` / `persona.py` / `apply.py` / `plugin.yaml` / 两份测试 / 六份文档）；push 要单独问。
-3. 观察期样本：目标约 262 个带非空 `session_id` 的回合，到量跑 `make drift`。
-4. 测试会话堆积：`local-6403bb0d…`、`local-bc0951ca…`、`local-2d9fd7f7…`、`local-81cf37a1…` 要不要删等用户定。
-5. `hermes-gateway` 的 systemd 单元有旧告警（`TimeoutStopSec=7s` 小于建议的 70s），要 `hermes gateway install --force` 重生成；与本仓无关。
+1. **push**：本地 `ahead 4`（`5acb3e1` / `655a3e6` / `6d21eb3` / 本轮这笔），老板说先不推，等他说。推之前 `git diff origin/main..HEAD --name-only | grep persona/user.md` 必须为空（`user.md` 被 `.git/info/exclude` 挡着，别 `git add`）。
+2. **复测衰减**：新措辞 2026-11-01 23:10 起生效，现在 `make drift` 的数据全是旧措辞的。攒够新措辞的回合（建议 ≥100 回合、且含 ≥10 个 11 轮以上的会话）再跑，只看 11-20 / 21+ 两段的「内心」列。
+3. **drift 的 `INNER` 口径要不要放宽到「括号含动作词」**：放宽能抓到「（把锅端起来）」这类，但历史数字会不可比。**待老板拍板**，没动。
+4. **桌面长会话口吻**：只在 oneshot 上验过两轮，≥11 轮的桌面会话还没实测。
+5. `hermes-gateway` 的 systemd 单元旧告警（`TimeoutStopSec=7s` < 建议 70s），要 `hermes gateway install --force` 重生成；与本仓无关。
+6. **`persona/user.md` 其实早已入库、而且已经公开**（2026-11-01 查出来的，与 `AGENTS.md`/本文件原先的说法冲突）：该文件被 `87becc9` + `251f0b5` 两个提交加进仓库，`git ls-tree origin/main` 里也有，blob `fa32d72c`；仓库是 `github.com/ansellchen-boop/hermes-whalechan-deepseek`，`gh repo view` 报 **PUBLIC**。`.git/info/exclude` 里那条规则只对**未追踪**文件生效，对已追踪文件是白写的。内容只有三行称呼（老板 / 大肥鱼 / 嘎啦嘛），没有密钥。**待老板拍板**：① 就这样，只把文档里「永不入库」改成「已入库、内容是称呼约定」；② `git rm --cached` 停追并加 `.gitignore`（历史里仍有）；③ 重写历史 + force push（公开仓，破坏性）。
 
 ## 下一步（新会话开工顺序）
 
-1. 提交本轮加固（`persona/user.md` 仍被 `.git/info/exclude` 挡着，别 `git add`）
-2. 新会话聊五轮验口吻；不对就调 `suffix.md` 措辞或 `rhythm_probability`，别动架构
-3. 稳定后再议 `agent/context_compressor.py` 摘要模板加 `## Voice & Style`（旧方案 C，仍待决）
+1. 读本文件 → `git status -sb` 确认还是 `ahead 4`，问老板推不推
+2. 攒够新措辞样本后跑 `make drift`，只比 11-20 / 21+ 两段的「内心」列
+3. 抬不起来再改 `suffix.md`（把「进度行必须带动作」再收一格），别动架构
+4. 稳定后再议 `agent/context_compressor.py` 摘要模板加 `## Voice & Style`（旧方案 C，仍待决）
