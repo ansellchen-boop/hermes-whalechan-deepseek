@@ -30,10 +30,13 @@ STALE_DAYS = 90
 MAX_ENTRY_LINES = 200
 MAX_CONSTRAINTS = 15
 
+# 每项 (入口文件, 文档基准目录)；基准为 None 时默认取入口所在目录。
+# 2026-11-03：家目录入口归档成 docs/legacy-hermes-agents.md，基准仍须是 /home/ubuntu，
+# 否则入口里 `docs/xxx.md` 会被解析成 docs/docs/xxx.md 全变死链。
 DEFAULT_TARGETS = [
-    "/home/ubuntu/AGENTS.md",
-    "/home/ubuntu/qq-bridge/AGENTS.md",
-    "/home/ubuntu/hermes-whalechan/AGENTS.md",
+    ("/home/ubuntu/docs/legacy-hermes-agents.md", "/home/ubuntu"),
+    ("/home/ubuntu/qq-bridge/AGENTS.md", None),
+    ("/home/ubuntu/hermes-whalechan/AGENTS.md", None),
 ]
 
 HISTORY = os.path.expanduser("~/.hermes/cache/audit/history.jsonl")
@@ -100,9 +103,8 @@ def audit_constraints(lines: list[str]) -> list[dict]:
     return items
 
 
-def audit_links(path: str, text: str) -> list[str]:
-    """入口里 `docs/xxx.md` 形式的引用，文件必须存在。"""
-    base = os.path.dirname(path)
+def audit_links(base: str, text: str) -> list[str]:
+    """入口里 `docs/xxx.md` 形式的引用，文件必须存在（相对 base 目录解析）。"""
     missing = []
     for rel in sorted(set(DOC_LINK.findall(text))):
         if not os.path.exists(os.path.join(base, rel)):
@@ -154,13 +156,14 @@ def previous_size(path: str) -> int | None:
     return last
 
 
-def audit_one(path: str) -> dict:
+def audit_one(path: str, base=None) -> dict:
     text = read(path)
     lines = text.splitlines()
     items = audit_constraints(lines)
     missing = [it for it in items if not (it["has_source"] and it["has_scope"] and it["has_expiry"])]
     chars = len(text)
 
+    base = base or os.path.dirname(path)
     fails, warns = [], []
     if len(lines) > MAX_ENTRY_LINES:
         fails.append(f"入口 {len(lines)} 行，超过 {MAX_ENTRY_LINES} 行上限")
@@ -168,9 +171,9 @@ def audit_one(path: str) -> dict:
         warns.append(f"硬约束 {len(items)} 条，超过 {MAX_CONSTRAINTS} 条建议值")
     for it in missing:
         fails.append(f"第 {it['line']} 行「{it['title']}」缺 {missing_parts(it)}")
-    for rel in audit_links(path, text):
+    for rel in audit_links(base, text):
         fails.append(f"死链：`{rel}` 不存在")
-    doc_missing = audit_docs(os.path.dirname(path))
+    doc_missing = audit_docs(base)
     for name in doc_missing:
         fails.append(f"docs/{name} 顶部缺时效声明（要 适用 / 过期条件 / 来源 三件）")
     days = last_touched(path)
@@ -213,13 +216,14 @@ def main() -> int:
     args = ap.parse_args()
 
     results = []
-    for path in args.targets:
+    for target in args.targets:
+        path, base = (target, None) if isinstance(target, str) else target
         if not os.path.exists(path):
             results.append({"path": path, "fails": [f"文件不存在"], "warns": [],
                             "lines": 0, "chars": 0, "delta": None,
                             "constraints": 0, "missing": 0, "days_since_touch": 0})
             continue
-        results.append(audit_one(path))
+        results.append(audit_one(path, base))
 
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
